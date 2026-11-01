@@ -9,10 +9,10 @@ Designed to be fully compatible with the **Smart Mobile Cam** protocol and **Sma
 ## 🌟 Key Features
 
 ### 1. Multi-Camera Hardware Engine
-- **Automatic Camera Discovery**: Automatically detects all video capture devices via Linux V4L2 and sysfs (`/sys/class/video4linux`).
-- **Hardware Type Classification**: Automatically differentiates between **Internal Laptop Webcams** (`EasyCamera`, `Integrated Camera`) and **External USB Webcams** (`Logitech`, `Creative`, `Elgato`, etc.).
-- **Dynamic Hot-Swapping**: Switch cameras on-the-fly (`switch_camera`) remotely from any client without disconnecting or interrupting the stream.
-- **Dynamic Resolution Control**: Switch seamlessly between `480p (SD)`, `720p (HD)`, and `1080p (FHD)` on the fly.
+- **Automatic Camera Discovery**: Automatically detects all video capture devices via Linux V4L2 and sysfs (`/sys/class/video4linux`), as well as connected **Android phones** via USB ADB!
+- **Hardware Type Classification**: Automatically differentiates between **Internal Laptop Webcams** (`EasyCamera`, `Integrated Camera`), **External USB Webcams** (`Logitech`, `Creative`), and **Android Smartphones** (e.g., `📱 Android Phone [RMX1801]`).
+- **Dynamic Hot-Swapping**: Switch cameras on-the-fly (`switch_camera`) remotely from any client without disconnecting or interrupting the stream (including switching between laptop webcam and phone camera!).
+- **Android ADB Bridge**: Seamlessly forwards video, audio, and torch/camera controls from `Smart Mobile Cam` running on the phone over high-speed USB.
 - **Hardware Optimization**: Thread-safe background capture loop decoupled from HTTP clients—multiple viewers can watch simultaneously without frame drops or hardware contention.
 
 ### 2. Universal Remote Viewing (3 Ways to View)

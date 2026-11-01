@@ -36,7 +36,12 @@ def print_banner(host: str, port: int, capture_mgr: CaptureManager):
     else:
         for cam in cams:
             marker = "⭐ [ACTIVE]" if cam.index == capture_mgr.camera_index else "  "
-            type_tag = "[INTERNAL]" if cam.camera_type == "internal" else "[USB/EXT]"
+            if cam.camera_type == "internal":
+                type_tag = "[INTERNAL]"
+            elif cam.camera_type == "android_phone":
+                type_tag = "[ANDROID USB]"
+            else:
+                type_tag = "[USB/EXT]"
             print(f"  {marker} Index {cam.index}: {type_tag} {cam.name} ({cam.path})")
 
     print("\n Network Access Points:")

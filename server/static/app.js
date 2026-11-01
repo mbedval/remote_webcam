@@ -64,7 +64,7 @@
     data.cameras.forEach((cam) => {
       const opt = document.createElement("option");
       opt.value = cam.index;
-      const typeIcon = cam.camera_type === "internal" ? "💻" : "🔌";
+      const typeIcon = cam.camera_type === "internal" ? "💻" : (cam.camera_type === "android_phone" ? "📱" : "🔌");
       opt.textContent = `${typeIcon} ${cam.name} (${cam.path})`;
       if (cam.index === data.activeCameraIndex) {
         opt.selected = true;

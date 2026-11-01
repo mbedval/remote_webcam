@@ -443,7 +443,12 @@ class DesktopClientWindow(QMainWindow):
 
         for cam in cams:
             idx = cam.get("index", 0)
-            cam_type = "💻 [Internal]" if cam.get("camera_type") == "internal" else "🔌 [USB]"
+            if cam.get("camera_type") == "internal":
+                cam_type = "💻 [Internal]"
+            elif cam.get("camera_type") == "android_phone":
+                cam_type = "📱 [Android USB]"
+            else:
+                cam_type = "🔌 [USB Ext]"
             name = cam.get("name", f"Camera {idx}")
             path = cam.get("path", "")
             label = f"{cam_type} {name} ({path})"

@@ -1,12 +1,15 @@
 """
 Web Application & REST API Module
-FastAPI server serving MJPEG stream, snapshot, camera controls, and Web Client UI.
+FastAPI server serving MJPEG stream, snapshot, camera controls, audio, and Web Client UI.
+Supports proxying audio and controls to connected Android phone when selected.
 """
 
 import os
 import socket
 import logging
-from typing import Optional, Dict, Any
+import urllib.request
+import urllib.parse
+from typing import Optional, Dict, Any, Generator
 from fastapi import FastAPI, Request, Query, Response, status
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,12 +35,25 @@ def get_local_ip() -> str:
     return ip
 
 
+def iter_phone_audio(url: str = "http://127.0.0.1:8088/audio") -> Generator[bytes, None, None]:
+    """Streams live microphone audio from connected Android phone."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "RemoteWebcamServer"})
+        with urllib.request.urlopen(req, timeout=3.0) as stream:
+            while True:
+                chunk = stream.read(2048)
+                if not chunk:
+                    break
+                yield chunk
+    except Exception as e:
+        logger.debug(f"Phone audio stream ended/unavailable: {e}")
+
+
 def create_app(capture_mgr: CaptureManager, host: str = "0.0.0.0", port: int = 8080) -> FastAPI:
     """Factory creating and configuring the FastAPI application."""
 
     app = FastAPI(title="Remote Webcam Streaming Server", version="1.0.0")
 
-    # Enable CORS for all remote clients
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -54,7 +70,6 @@ def create_app(capture_mgr: CaptureManager, host: str = "0.0.0.0", port: int = 8
 
     @app.get("/")
     async def index():
-        """Serves the interactive web client viewer."""
         index_file = os.path.join(static_dir, "index.html")
         if os.path.exists(index_file):
             return FileResponse(index_file)
@@ -62,7 +77,6 @@ def create_app(capture_mgr: CaptureManager, host: str = "0.0.0.0", port: int = 8
 
     @app.get("/video")
     async def video_feed():
-        """MJPEG video stream endpoint."""
         return StreamingResponse(
             capture_mgr.iter_mjpeg_frames(),
             media_type="multipart/x-mixed-replace; boundary=frame",
@@ -75,7 +89,6 @@ def create_app(capture_mgr: CaptureManager, host: str = "0.0.0.0", port: int = 8
 
     @app.get("/snapshot")
     async def snapshot():
-        """Current high-resolution JPEG snapshot."""
         data = capture_mgr.get_snapshot()
         if not data:
             return Response(content=b"", status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -87,22 +100,28 @@ def create_app(capture_mgr: CaptureManager, host: str = "0.0.0.0", port: int = 8
 
     @app.get("/audio")
     async def audio_feed():
-        """16kHz 16-bit Mono PCM audio stream."""
-        return StreamingResponse(
-            AudioStreamer.iter_audio_pcm(),
-            media_type="audio/L16;rate=16000;channels=1",
-            headers={"Cache-Control": "no-cache"},
-        )
+        if capture_mgr.is_android_camera:
+            phone_port = 8088 + (capture_mgr.camera_index - 100)
+            phone_audio_url = f"http://127.0.0.1:{phone_port}/audio"
+            return StreamingResponse(
+                iter_phone_audio(phone_audio_url),
+                media_type="audio/L16;rate=16000;channels=1",
+                headers={"Cache-Control": "no-cache"},
+            )
+        else:
+            return StreamingResponse(
+                AudioStreamer.iter_audio_pcm(),
+                media_type="audio/L16;rate=16000;channels=1",
+                headers={"Cache-Control": "no-cache"},
+            )
 
     @app.get("/status")
     async def server_status():
-        """JSON status endpoint compatible with SmartCam ecosystem."""
         stat = capture_mgr.get_status(host=actual_ip, port=port)
         return JSONResponse(stat)
 
     @app.get("/cameras")
     async def list_cameras():
-        """Returns verified list of internal and external USB cameras."""
         cams = CameraDetector.detect_cameras()
         return JSONResponse({
             "count": len(cams),
@@ -118,17 +137,6 @@ def create_app(capture_mgr: CaptureManager, host: str = "0.0.0.0", port: int = 8
         value: Optional[str] = Query(None),
         state: Optional[str] = Query(None),
     ):
-        """
-        Unified remote control endpoint accepting query params or JSON body.
-        Supports:
-          - action=switch_camera [& index=X]
-          - action=resolution & value=480p|720p|1080p
-          - action=fps & value=30
-          - action=quality & value=85
-          - action=flip_h
-          - action=flip_v
-        """
-        # If POST with JSON body, merge parameters
         if request.method == "POST":
             try:
                 body = await request.json()
@@ -153,10 +161,14 @@ def create_app(capture_mgr: CaptureManager, host: str = "0.0.0.0", port: int = 8
             result["success"] = ok
             result["activeCameraIndex"] = capture_mgr.camera_index
             result["facing"] = (
-                "Internal Webcam"
-                if capture_mgr.current_camera_info
-                and capture_mgr.current_camera_info.camera_type == "internal"
-                else "External USB Webcam"
+                "Android Phone Camera"
+                if capture_mgr.is_android_camera
+                else (
+                    "Internal Webcam"
+                    if capture_mgr.current_camera_info
+                    and capture_mgr.current_camera_info.camera_type == "internal"
+                    else "External USB Webcam"
+                )
             )
 
         elif action == "resolution":
@@ -190,9 +202,22 @@ def create_app(capture_mgr: CaptureManager, host: str = "0.0.0.0", port: int = 8
             result["flipVertical"] = flipped
 
         elif action == "torch":
-            # Protocol compatibility with mobile SmartCam
+            # If Android phone is active, forward torch control
+            if capture_mgr.is_android_camera:
+                phone_port = 8088 + (capture_mgr.camera_index - 100)
+                try:
+                    q = f"action=torch"
+                    if state:
+                        q += f"&state={state}"
+                    url = f"http://127.0.0.1:{phone_port}/control?{q}"
+                    with urllib.request.urlopen(url, timeout=2.0) as resp:
+                        import json
+                        res_data = json.loads(resp.read().decode())
+                        return JSONResponse(res_data)
+                except Exception as e:
+                    return JSONResponse({"torch": False, "error": str(e)})
             result["torch"] = False
-            result["message"] = "Torch not applicable for desktop webcam"
+            result["message"] = "Torch not supported for local webcam"
 
         else:
             result["success"] = False

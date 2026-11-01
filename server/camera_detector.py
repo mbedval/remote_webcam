@@ -1,12 +1,15 @@
 """
 Camera Detector Module
-Discovers all internal laptop webcams and external USB webcams on Linux via V4L2 and sysfs.
+Discovers all internal laptop webcams, external USB webcams via V4L2/sysfs,
+and connected Android smartphones via USB ADB.
 """
 
 import os
 import glob
 import fcntl
 import struct
+import shutil
+import subprocess
 import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
@@ -24,18 +27,19 @@ class CameraInfo:
     index: int
     path: str
     name: str
-    camera_type: str  # 'internal' or 'external_usb'
+    camera_type: str  # 'internal', 'external_usb', or 'android_phone'
     card_name: str
     display_name: str
     driver: str = ""
     bus_info: str = ""
+    serial: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
 
 class CameraDetector:
-    """Discovers and classifies video capture devices on Linux."""
+    """Discovers and classifies local video devices and connected Android devices."""
 
     COMMON_INTERNAL_KEYWORDS = [
         "integrated", "easycamera", "facetime", "internal",
@@ -44,10 +48,7 @@ class CameraDetector:
 
     @staticmethod
     def _is_capture_device(device_path: str) -> tuple[bool, str, str, str]:
-        """
-        Queries V4L2 capability to check if the device actually supports video capture.
-        Returns: (is_capture, driver_name, card_name, bus_info)
-        """
+        """Queries V4L2 capability to check if the device supports video capture."""
         try:
             fd = os.open(device_path, os.O_RDWR | os.O_NONBLOCK)
             buf = bytearray(104)
@@ -72,10 +73,7 @@ class CameraDetector:
 
     @staticmethod
     def _determine_type(device_name: str, card_name: str) -> str:
-        """
-        Determines whether a device is an internal laptop webcam or external USB camera.
-        Uses sysfs 'removable' attribute and device tree inspection.
-        """
+        """Determines whether a device is an internal laptop webcam or external USB camera."""
         sysfs_dev = f"/sys/class/video4linux/{device_name}/device"
         if os.path.exists(sysfs_dev):
             real_path = os.path.realpath(sysfs_dev)
@@ -93,7 +91,7 @@ class CameraDetector:
                         pass
                 curr = os.path.dirname(curr)
 
-        # Fallback to card name heuristic
+        # Fallback heuristic
         card_lower = card_name.lower()
         for kw in CameraDetector.COMMON_INTERNAL_KEYWORDS:
             if kw in card_lower:
@@ -102,9 +100,44 @@ class CameraDetector:
         return "external_usb"
 
     @classmethod
+    def get_adb_devices(cls) -> List[Dict[str, str]]:
+        """Detects Android devices connected with ADB debugging enabled."""
+        if not shutil.which("adb"):
+            return []
+
+        try:
+            res = subprocess.check_output(["adb", "devices", "-l"], timeout=2).decode("utf-8", "ignore")
+            devices = []
+            for line in res.strip().split("\n")[1:]:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[1] == "device":
+                    serial = parts[0]
+                    model = "Android Device"
+                    for p in parts[2:]:
+                        if p.startswith("model:"):
+                            model = p.split(":", 1)[1]
+                    devices.append({"serial": serial, "model": model})
+            return devices
+        except Exception as e:
+            logger.debug(f"ADB device scan error: {e}")
+            return []
+
+    @classmethod
+    def setup_adb_forward(cls, serial: str, local_port: int = 8088, phone_port: int = 8080) -> bool:
+        """Sets up port forwarding over USB via ADB."""
+        try:
+            cmd = ["adb", "-s", serial, "forward", f"tcp:{local_port}", f"tcp:{phone_port}"]
+            subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logger.info(f"ADB port forward established: localhost:{local_port} -> phone:{phone_port} ({serial})")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to set up ADB port forward for {serial}: {e}")
+            return False
+
+    @classmethod
     def detect_cameras(cls) -> List[CameraInfo]:
         """
-        Scans all /dev/video* devices and returns verified video capture cameras.
+        Scans all /dev/video* devices and connected ADB Android phones.
         """
         cameras: List[CameraInfo] = []
         device_paths = sorted(
@@ -114,6 +147,7 @@ class CameraDetector:
             else 999,
         )
 
+        # 1. Local V4L2 cameras (internal & USB webcams)
         for dev_path in device_paths:
             dev_name = os.path.basename(dev_path)
             if not dev_name.replace("video", "").isdigit():
@@ -144,7 +178,29 @@ class CameraDetector:
                 )
             )
 
-        logger.info(f"Discovered {len(cameras)} capture cameras: {[c.display_name for c in cameras]}")
+        # 2. Connected Android Phones via ADB
+        adb_devices = cls.get_adb_devices()
+        for idx, dev in enumerate(adb_devices):
+            phone_index = 100 + idx
+            serial = dev["serial"]
+            model = dev["model"]
+            cls.setup_adb_forward(serial, local_port=8088 + idx, phone_port=8080)
+
+            cameras.append(
+                CameraInfo(
+                    index=phone_index,
+                    path=f"adb://{serial}",
+                    name=f"Android Cam ({model})",
+                    camera_type="android_phone",
+                    card_name=f"Android {model}",
+                    display_name=f"📱 Android Phone [{model}] (USB: {serial})",
+                    driver="adb_bridge",
+                    bus_info=f"usb-adb-{serial}",
+                    serial=serial,
+                )
+            )
+
+        logger.info(f"Discovered {len(cameras)} total video sources: {[c.display_name for c in cameras]}")
         return cameras
 
     @classmethod

@@ -1,13 +1,15 @@
 """
 Capture Manager Module
-High-performance, multi-client webcam streamer using OpenCV.
+High-performance, multi-client webcam streamer using OpenCV and Android ADB relay.
 Decoupled background capture loop with thread-safe MJPEG generation,
-dynamic camera switching (internal <-> USB), resolution scaling, and HUD metrics.
+dynamic camera switching (internal <-> USB <-> Android phone), resolution scaling, and HUD metrics.
 """
 
 import time
 import threading
 import logging
+import urllib.request
+import urllib.error
 from typing import Optional, Dict, Any, Generator, Tuple
 import cv2
 import numpy as np
@@ -16,9 +18,12 @@ from .camera_detector import CameraDetector, CameraInfo
 
 logger = logging.getLogger("CaptureManager")
 
+JPEG_SOI = b"\xff\xd8"
+JPEG_EOI = b"\xff\xd9"
+
 
 class CaptureManager:
-    """Manages webcam capture, dynamic switching, and multi-client frame dispatch."""
+    """Manages webcam & phone capture, dynamic switching, and multi-client frame dispatch."""
 
     RESOLUTIONS: Dict[str, Tuple[int, int]] = {
         "480p": (640, 480),
@@ -69,6 +74,12 @@ class CaptureManager:
                 return cam
         return None
 
+    @property
+    def is_android_camera(self) -> bool:
+        return self.camera_index >= 100 or (
+            self.current_camera_info and self.current_camera_info.camera_type == "android_phone"
+        )
+
     def start(self):
         """Starts the background capture thread."""
         with self._lock:
@@ -95,7 +106,7 @@ class CaptureManager:
                 self._cap = None
         logger.info("CaptureManager stopped")
 
-    def _create_placeholder(self, text: str) -> bytes:
+    def _create_placeholder(self, lines: list[str]) -> bytes:
         """Generates a neat placeholder frame when camera is loading or disconnected."""
         img = np.zeros((self.target_height, self.target_width, 3), dtype=np.uint8)
         img[:] = (26, 29, 36)  # Dark slate background
@@ -104,29 +115,33 @@ class CaptureManager:
         cv2.rectangle(img, (10, 10), (self.target_width - 10, self.target_height - 10), (45, 52, 64), 2)
 
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.8
-        thickness = 2
-        text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-        tx = (self.target_width - text_size[0]) // 2
-        ty = (self.target_height + text_size[1]) // 2
+        y_start = self.target_height // 2 - (len(lines) * 25)
+        for i, text in enumerate(lines):
+            font_scale = 0.75 if i == 0 else 0.6
+            thickness = 2 if i == 0 else 1
+            color = (255, 255, 255) if i == 0 else (160, 175, 200)
+            text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+            tx = (self.target_width - text_size[0]) // 2
+            ty = y_start + (i * 45)
+            cv2.putText(img, text, (tx, ty), font, font_scale, color, thickness, cv2.LINE_AA)
 
-        cv2.putText(img, text, (tx, ty), font, font_scale, (220, 220, 230), thickness, cv2.LINE_AA)
         _, enc = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return enc.tobytes()
 
     def _open_camera(self, index: int) -> Optional[cv2.VideoCapture]:
         """Attempts to open a V4L2 camera by index and sets optimal properties."""
+        if index >= 100:
+            return None  # Android camera handled via HTTP/ADB stream
+
         logger.info(f"Opening camera /dev/video{index}...")
         cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
         if not cap.isOpened():
-            # Fallback without CAP_V4L2 flag
             cap = cv2.VideoCapture(index)
 
         if not cap.isOpened():
             logger.error(f"Failed to open camera /dev/video{index}")
             return None
 
-        # Request MJPG fourcc for USB webcams to allow higher resolutions and frame rates
         try:
             fourcc = cv2.VideoWriter_fourcc(*"MJPG")
             cap.set(cv2.CAP_PROP_FOURCC, fourcc)
@@ -137,7 +152,6 @@ class CaptureManager:
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_height)
         cap.set(cv2.CAP_PROP_FPS, self.target_fps)
 
-        # Warm up: read one frame
         for _ in range(3):
             ret, _ = cap.read()
             if ret:
@@ -148,19 +162,73 @@ class CaptureManager:
 
     def _capture_loop(self):
         """Dedicated background capture loop."""
-        self._cap = self._open_camera(self.camera_index)
         fps_timer = time.time()
         fps_frame_count = 0
 
         while self._running:
-            loop_start = time.time()
-
             if self._switching_camera:
                 time.sleep(0.05)
                 continue
 
+            # Case A: Android Phone Stream (via ADB port forward http://127.0.0.1:8088/video)
+            if self.is_android_camera:
+                phone_port = 8088 + (self.camera_index - 100)
+                phone_url = f"http://127.0.0.1:{phone_port}/video"
+                try:
+                    req = urllib.request.Request(phone_url, headers={"User-Agent": "RemoteWebcamServer"})
+                    with urllib.request.urlopen(req, timeout=3.0) as stream:
+                        buffer = bytearray()
+                        while self._running and not self._switching_camera:
+                            chunk = stream.read(8192)
+                            if not chunk:
+                                break
+                            buffer.extend(chunk)
+
+                            while True:
+                                soi = buffer.find(JPEG_SOI)
+                                if soi == -1:
+                                    buffer = buffer[-1:]
+                                    break
+                                eoi = buffer.find(JPEG_EOI, soi + 2)
+                                if eoi == -1:
+                                    if soi > 0:
+                                        del buffer[:soi]
+                                    break
+
+                                frame_jpeg = bytes(buffer[soi : eoi + 2])
+                                del buffer[: eoi + 2]
+
+                                with self._condition:
+                                    self._current_frame_bytes = frame_jpeg
+                                    self._frame_count += 1
+                                    fps_frame_count += 1
+                                    self._condition.notify_all()
+
+                                now = time.time()
+                                if now - fps_timer >= 1.0:
+                                    self._measured_fps = fps_frame_count / (now - fps_timer)
+                                    fps_frame_count = 0
+                                    fps_timer = now
+
+                except Exception as e:
+                    # Phone stream not ready or app not broadcasting
+                    card_name = self.current_camera_info.name if self.current_camera_info else "Android Phone"
+                    placeholder = self._create_placeholder([
+                        f"📱 {card_name} Connected",
+                        "Open 'Smart Mobile Cam' on your phone",
+                        "and tap 'Start Server' (Broadcaster Mode)",
+                    ])
+                    with self._condition:
+                        self._current_frame_bytes = placeholder
+                        self._condition.notify_all()
+                    time.sleep(1.0)
+                continue
+
+            # Case B: Local V4L2 Webcam
+            loop_start = time.time()
+
             if not self._cap or not self._cap.isOpened():
-                placeholder = self._create_placeholder(f"Camera {self.camera_index} Disconnected. Retrying...")
+                placeholder = self._create_placeholder([f"Camera {self.camera_index} Disconnected. Retrying..."])
                 with self._condition:
                     self._current_frame_bytes = placeholder
                     self._condition.notify_all()
@@ -170,11 +238,10 @@ class CaptureManager:
 
             ret, frame = self._cap.read()
             if not ret or frame is None:
-                logger.warning(f"Failed to grab frame from camera {self.camera_index}")
-                time.sleep(0.1)
+                time.sleep(0.05)
                 continue
 
-            # Apply flips if configured
+            # Flips
             if self.flip_horizontal and self.flip_vertical:
                 frame = cv2.flip(frame, -1)
             elif self.flip_horizontal:
@@ -182,12 +249,12 @@ class CaptureManager:
             elif self.flip_vertical:
                 frame = cv2.flip(frame, 0)
 
-            # Resize if camera hardware output doesn't match requested resolution
+            # Resize if needed
             h, w = frame.shape[:2]
             if w != self.target_width or h != self.target_height:
                 frame = cv2.resize(frame, (self.target_width, self.target_height), interpolation=cv2.INTER_AREA)
 
-            # Encode to JPEG
+            # JPEG encode
             encode_params = [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality]
             success, enc_bytes = cv2.imencode(".jpg", frame, encode_params)
             if not success:
@@ -202,31 +269,25 @@ class CaptureManager:
                 fps_frame_count += 1
                 self._condition.notify_all()
 
-            # Calculate FPS window
             now = time.time()
             if now - fps_timer >= 1.0:
                 self._measured_fps = fps_frame_count / (now - fps_timer)
                 fps_frame_count = 0
                 fps_timer = now
 
-            # Throttle to target FPS
             elapsed = time.time() - loop_start
             sleep_duration = (1.0 / self.target_fps) - elapsed
             if sleep_duration > 0.001:
                 time.sleep(sleep_duration)
 
     def switch_camera(self, target_index: Optional[int] = None) -> bool:
-        """
-        Dynamically switches to another internal or external USB camera.
-        If target_index is None, cycles to the next available camera.
-        """
+        """Dynamically switches camera between internal webcam, USB webcam, and Android phone."""
         self.cameras = CameraDetector.detect_cameras()
         if not self.cameras:
             logger.warning("No cameras available to switch to")
             return False
 
         if target_index is None:
-            # Cycle next
             indices = [c.index for c in self.cameras]
             if self.camera_index in indices:
                 next_idx = indices[(indices.index(self.camera_index) + 1) % len(indices)]
@@ -234,15 +295,14 @@ class CaptureManager:
                 next_idx = indices[0]
             target_index = next_idx
 
-        if target_index == self.camera_index and self._cap and self._cap.isOpened():
+        if target_index == self.camera_index:
             return True
 
         logger.info(f"Switching from camera {self.camera_index} to {target_index}...")
 
         with self._condition:
             self._switching_camera = True
-            # Show temporary transition placeholder
-            placeholder = self._create_placeholder(f"Switching to Camera {target_index}...")
+            placeholder = self._create_placeholder([f"Switching to Camera {target_index}..."])
             self._current_frame_bytes = placeholder
             self._condition.notify_all()
 
@@ -253,8 +313,12 @@ class CaptureManager:
 
             self.camera_index = target_index
             self.current_camera_info = self._find_camera_info(target_index)
-            self._cap = self._open_camera(target_index)
-            success = self._cap is not None and self._cap.isOpened()
+
+            if not self.is_android_camera:
+                self._cap = self._open_camera(target_index)
+                success = self._cap is not None and self._cap.isOpened()
+            else:
+                success = True  # Handled in capture loop
         finally:
             with self._condition:
                 self._switching_camera = False
@@ -262,29 +326,22 @@ class CaptureManager:
         return success
 
     def set_resolution(self, resolution: str) -> bool:
-        """Dynamically updates resolution (e.g. '480p', '720p', '1080p')."""
         if resolution not in self.RESOLUTIONS:
             return False
-
         self.resolution_name = resolution
         w, h = self.RESOLUTIONS[resolution]
         self.target_width, self.target_height = w, h
-
         if self._cap and self._cap.isOpened():
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
             self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-
-        logger.info(f"Resolution set to {resolution} ({w}x{h})")
         return True
 
     def set_fps(self, fps: int):
-        """Sets target streaming FPS."""
         self.target_fps = max(5, min(60, fps))
         if self._cap and self._cap.isOpened():
             self._cap.set(cv2.CAP_PROP_FPS, self.target_fps)
 
     def set_quality(self, quality: int):
-        """Sets JPEG compression quality (1-100)."""
         self.jpeg_quality = max(10, min(100, quality))
 
     def toggle_flip_h(self) -> bool:
@@ -296,15 +353,10 @@ class CaptureManager:
         return self.flip_vertical
 
     def get_snapshot(self) -> Optional[bytes]:
-        """Returns the latest full-resolution JPEG frame."""
         with self._lock:
             return self._current_frame_bytes
 
     def iter_mjpeg_frames(self) -> Generator[bytes, None, None]:
-        """
-        Yields multipart MJPEG frames for HTTP StreamingResponse.
-        Multiple clients can consume this generator concurrently.
-        """
         with self._lock:
             self._active_viewers += 1
 
@@ -312,7 +364,6 @@ class CaptureManager:
             last_sent_count = -1
             while self._running:
                 with self._condition:
-                    # Wait for a new frame
                     while self._running and self._frame_count == last_sent_count:
                         self._condition.wait(timeout=0.1)
 
@@ -323,7 +374,6 @@ class CaptureManager:
                     last_sent_count = self._frame_count
 
                 if frame_bytes:
-                    # Yield multipart JPEG chunk
                     yield (
                         b"--frame\r\n"
                         b"Content-Type: image/jpeg\r\n"
@@ -335,13 +385,17 @@ class CaptureManager:
                 self._active_viewers = max(0, self._active_viewers - 1)
 
     def get_status(self, host: str = "0.0.0.0", port: int = 8080) -> Dict[str, Any]:
-        """Returns server status dictionary formatted for SmartCam compatibility."""
         cam_info = self.current_camera_info or self._find_camera_info(self.camera_index)
         facing_label = "Internal Webcam"
         cam_name = f"Camera {self.camera_index}"
         if cam_info:
             cam_name = cam_info.name
-            facing_label = "Internal Webcam" if cam_info.camera_type == "internal" else "External USB Webcam"
+            if cam_info.camera_type == "internal":
+                facing_label = "Internal Webcam"
+            elif cam_info.camera_type == "android_phone":
+                facing_label = "Android Phone Camera"
+            else:
+                facing_label = "External USB Webcam"
 
         return {
             "isRunning": self._running,
