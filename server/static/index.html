@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Remote Webcam Live Stream</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📹</text></svg>">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <span class="app-icon">📹</span>
+        <div>
+          <h1 class="app-title">Remote Webcam</h1>
+          <div class="server-badge">
+            <span class="status-dot connected" id="statusDot"></span>
+            <span id="serverEndpoint">http://localhost:8080</span>
+          </div>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="metric-pill">
+          <span class="metric-label">VIEWERS</span>
+          <span class="metric-val" id="viewersCount">1</span>
+        </div>
+        <div class="metric-pill">
+          <span class="metric-label">FPS</span>
+          <span class="metric-val" id="fpsDisplay">--</span>
+        </div>
+        <button class="btn btn-secondary" id="btnSettings" title="Configure Server IP & Port">
+          ⚙️ Connect Server
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Player Section -->
+    <main class="player-container">
+      <div class="video-wrapper" id="videoWrapper">
+        <img id="videoStream" src="/video" alt="Webcam Stream" class="video-feed" />
+
+        <!-- Live HUD Overlay -->
+        <div class="hud-overlay" id="hudOverlay">
+          <div class="hud-item badge-live">🔴 LIVE</div>
+          <div class="hud-item" id="hudRes">720p</div>
+          <div class="hud-item" id="hudCamera">Internal Webcam</div>
+        </div>
+
+        <!-- Fullscreen Overlay Button -->
+        <button class="fullscreen-btn" id="btnFullscreen" title="Toggle Fullscreen (F)">
+          ⛶
+        </button>
+      </div>
+
+      <!-- Control Toolbar -->
+      <section class="controls-card">
+        <div class="control-row">
+          <!-- Camera Selector -->
+          <div class="control-group">
+            <label for="cameraSelect" class="control-label">📷 Camera Device</label>
+            <div class="input-with-button">
+              <select id="cameraSelect" class="styled-select">
+                <option value="0">Loading cameras...</option>
+              </select>
+              <button class="btn btn-icon" id="btnRescan" title="Scan for newly plugged USB cameras">
+                🔄
+              </button>
+            </div>
+          </div>
+
+          <!-- Resolution Selector -->
+          <div class="control-group">
+            <label for="resSelect" class="control-label">📐 Resolution</label>
+            <select id="resSelect" class="styled-select">
+              <option value="480p">480p (640x480)</option>
+              <option value="720p" selected>720p (1280x720)</option>
+              <option value="1080p">1080p (1920x1080)</option>
+            </select>
+          </div>
+
+          <!-- Quick Action Buttons -->
+          <div class="control-group actions-group">
+            <label class="control-label">⚡ Actions</label>
+            <div class="action-buttons">
+              <button class="btn btn-primary" id="btnSnapshot" title="Save snapshot image">
+                📸 Snapshot
+              </button>
+              <button class="btn btn-secondary" id="btnFlipH" title="Flip Horizontal (Mirror)">
+                ↔️ Flip H
+              </button>
+              <button class="btn btn-secondary" id="btnFlipV" title="Flip Vertical">
+                ↕️ Flip V
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Connect / Settings Modal -->
+    <div class="modal-backdrop" id="settingsModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Connect to Remote Webcam Server</h3>
+          <button class="modal-close" id="btnCloseModal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-description">
+            Specify the IP address and Port of the laptop or PC hosting the webcam stream.
+          </p>
+          <div class="form-group">
+            <label for="inputHost">Server IP / Hostname</label>
+            <input type="text" id="inputHost" placeholder="e.g. 192.168.1.14" class="styled-input" />
+          </div>
+          <div class="form-group">
+            <label for="inputPort">Server Port</label>
+            <input type="number" id="inputPort" placeholder="8080" value="8080" class="styled-input" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btnCancelModal">Cancel</button>
+          <button class="btn btn-primary" id="btnSaveServer">Connect & Stream</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
