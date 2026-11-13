@@ -39,11 +39,12 @@
     <!-- Main Player Section -->
     <main class="player-container">
       <div class="video-wrapper" id="videoWrapper">
-        <img id="videoStream" src="/video" alt="Webcam Stream" class="video-feed" />
+        <img id="videoStream" src="/video" alt="Webcam Stream" class="video-feed" crossOrigin="anonymous" />
 
         <!-- Live HUD Overlay -->
         <div class="hud-overlay" id="hudOverlay">
           <div class="hud-item badge-live">🔴 LIVE</div>
+          <div class="hud-item badge-rec" id="hudRec" style="display: none;">🔴 REC 00:00</div>
           <div class="hud-item" id="hudRes">720p</div>
           <div class="hud-item" id="hudCamera">Internal Webcam</div>
         </div>
@@ -80,11 +81,26 @@
             </select>
           </div>
 
+          <!-- Recording Controls: Format & Record Button -->
+          <div class="control-group">
+            <label for="recordFormat" class="control-label">📼 Record Stream</label>
+            <div class="input-with-button">
+              <select id="recordFormat" class="styled-select">
+                <option value="mp4" selected>MP4 (.mp4)</option>
+                <option value="webp">WebP (.webp)</option>
+                <option value="webm">WebM (.webm)</option>
+              </select>
+              <button class="btn btn-record" id="btnRecord" title="Record video stream locally to this device (Shortcut: R)">
+                <span class="rec-icon">🔴</span> <span id="recordBtnText">Record</span>
+              </button>
+            </div>
+          </div>
+
           <!-- Quick Action Buttons -->
           <div class="control-group actions-group">
             <label class="control-label">⚡ Actions</label>
             <div class="action-buttons">
-              <button class="btn btn-primary" id="btnSnapshot" title="Save snapshot image">
+              <button class="btn btn-primary" id="btnSnapshot" title="Save snapshot image (Shortcut: S)">
                 📸 Snapshot
               </button>
               <button class="btn btn-secondary" id="btnFlipH" title="Flip Horizontal (Mirror)">

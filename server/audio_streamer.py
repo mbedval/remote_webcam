@@ -4,6 +4,7 @@ Captures 16kHz 16-bit Mono PCM audio from system microphone using arecord / ALSA
 compatible with SmartCam audio receiver (/audio).
 """
 
+import sys
 import shutil
 import subprocess
 import logging
@@ -21,27 +22,52 @@ class AudioStreamer:
 
     @classmethod
     def is_available(cls) -> bool:
-        """Checks if arecord is installed."""
-        return shutil.which("arecord") is not None
+        """Checks if an audio capture tool (arecord or ffmpeg) is installed."""
+        if sys.platform == "win32":
+            return shutil.which("ffmpeg") is not None
+        return shutil.which("arecord") is not None or shutil.which("ffmpeg") is not None
 
     @classmethod
     def iter_audio_pcm(cls) -> Generator[bytes, None, None]:
         """
-        Spawns arecord and streams raw PCM audio.
+        Streams raw PCM audio from microphone.
         Yields raw byte chunks.
         """
         if not cls.is_available():
-            logger.warning("arecord not found; audio streaming disabled.")
+            logger.info("Audio capture tool not found; audio streaming disabled.")
             return
 
-        cmd = [
-            "arecord",
-            "-q",
-            "-t", "raw",
-            "-f", "S16_LE",
-            "-r", str(cls.RATE),
-            "-c", str(cls.CHANNELS),
-        ]
+        if sys.platform == "win32":
+            cmd = [
+                "ffmpeg",
+                "-loglevel", "error",
+                "-f", "dshow",
+                "-i", "audio=default",
+                "-f", "s16le",
+                "-ar", str(cls.RATE),
+                "-ac", str(cls.CHANNELS),
+                "-",
+            ]
+        elif shutil.which("arecord"):
+            cmd = [
+                "arecord",
+                "-q",
+                "-t", "raw",
+                "-f", "S16_LE",
+                "-r", str(cls.RATE),
+                "-c", str(cls.CHANNELS),
+            ]
+        else:
+            cmd = [
+                "ffmpeg",
+                "-loglevel", "error",
+                "-f", "pulse",
+                "-i", "default",
+                "-f", "s16le",
+                "-ar", str(cls.RATE),
+                "-ac", str(cls.CHANNELS),
+                "-",
+            ]
 
         proc = None
         try:

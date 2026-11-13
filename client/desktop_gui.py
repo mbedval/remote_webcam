@@ -23,6 +23,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize
 
 from .api import RemoteWebcamApi
 from .mjpeg_receiver import MjpegReceiver
+from .recorder import StreamRecorder
 
 CONFIG_PATH = Path.home() / ".config" / "remote_webcam" / "client_config.json"
 
@@ -86,6 +87,22 @@ QPushButton#btnDisconnect {
 QPushButton#btnDisconnect:hover {
     background-color: #dc2626;
 }
+QPushButton#btnRecord {
+    background-color: #ef4444;
+    border-color: #dc2626;
+    color: white;
+}
+QPushButton#btnRecord:hover {
+    background-color: #dc2626;
+}
+QPushButton#btnRecordActive {
+    background-color: #b91c1c;
+    border-color: #991b1b;
+    color: white;
+}
+QPushButton#btnRecordActive:hover {
+    background-color: #991b1b;
+}
 QStatusBar {
     background-color: #1a1d27;
     color: #9ca3af;
@@ -106,9 +123,16 @@ class VideoWidget(QWidget):
         self.fps_text = ""
         self.res_text = ""
         self.status_color = QColor(239, 68, 68)  # Red
+        self.is_recording = False
+        self.record_time_text = ""
 
     def update_frame(self, pixmap: QPixmap):
         self.pixmap = pixmap
+        self.update()
+
+    def set_recording(self, is_recording: bool, time_text: str = ""):
+        self.is_recording = is_recording
+        self.record_time_text = time_text
         self.update()
 
     def update_hud(self, hud_text: str, fps: float, res: str, is_connected: bool):
@@ -157,6 +181,17 @@ class VideoWidget(QWidget):
         painter.setPen(self.status_color)
         painter.drawText(26, 35, badge_text)
 
+        # Draw Recording badge top-right if recording
+        if self.is_recording:
+            rec_text = f"● REC {self.record_time_text}"
+            rec_width = painter.fontMetrics().horizontalAdvance(rec_text) + 20
+            rec_x = self.width() - rec_width - 16
+            painter.setBrush(QColor(185, 28, 28, 220))
+            painter.setPen(QColor(239, 68, 68))
+            painter.drawRoundedRect(rec_x, 16, rec_width, 28, 4, 4)
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(rec_x + 10, 35, rec_text)
+
 
 class LanScanWorker(QThread):
     """Background worker for LAN subnet server discovery."""
@@ -193,6 +228,7 @@ class DesktopClientWindow(QMainWindow):
         self.active_camera_name = "Camera"
 
         self.last_frame_bytes: Optional[bytes] = None
+        self.recorder: Optional[StreamRecorder] = None
 
         self._load_config()
         self._init_ui()
@@ -201,6 +237,10 @@ class DesktopClientWindow(QMainWindow):
         # Polling timer for status and latency
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self._poll_status)
+
+        # Recording timer
+        self.record_timer = QTimer(self)
+        self.record_timer.timeout.connect(self._update_record_timer)
 
         # Auto-connect if configured
         if self.host and self.port:
@@ -296,6 +336,16 @@ class DesktopClientWindow(QMainWindow):
         self.combo_res.setCurrentText("720p")
         self.combo_res.currentIndexChanged.connect(self._on_resolution_selected)
 
+        lbl_format = QLabel("📼 Record:")
+        self.combo_record_format = QComboBox()
+        self.combo_record_format.addItems(["MP4 (.mp4)", "WebP (.webp)"])
+        self.combo_record_format.setFixedWidth(115)
+
+        self.btn_record = QPushButton("🔴 Record")
+        self.btn_record.setObjectName("btnRecord")
+        self.btn_record.setToolTip("Start/Stop recording video stream locally (Shortcut: R)")
+        self.btn_record.clicked.connect(self._toggle_recording)
+
         self.btn_snapshot = QPushButton("📸 Snapshot")
         self.btn_snapshot.setToolTip("Save snapshot image (Shortcut: S)")
         self.btn_snapshot.clicked.connect(self._take_snapshot)
@@ -315,6 +365,9 @@ class DesktopClientWindow(QMainWindow):
         controls_layout.addWidget(self.btn_refresh_cams)
         controls_layout.addWidget(lbl_res)
         controls_layout.addWidget(self.combo_res)
+        controls_layout.addWidget(lbl_format)
+        controls_layout.addWidget(self.combo_record_format)
+        controls_layout.addWidget(self.btn_record)
         controls_layout.addStretch()
         controls_layout.addWidget(self.btn_snapshot)
         controls_layout.addWidget(self.btn_flip_h)
@@ -331,6 +384,7 @@ class DesktopClientWindow(QMainWindow):
         # Keyboard shortcuts
         QShortcut(QKeySequence("F"), self, self._toggle_fullscreen)
         QShortcut(QKeySequence("S"), self, self._take_snapshot)
+        QShortcut(QKeySequence("R"), self, self._toggle_recording)
         QShortcut(QKeySequence("Escape"), self, self._exit_fullscreen)
 
     def _setup_signals(self):
@@ -386,6 +440,8 @@ class DesktopClientWindow(QMainWindow):
     def _disconnect(self):
         self.is_connected = False
         self.poll_timer.stop()
+        if self.recorder and self.recorder.is_recording:
+            self._stop_recording()
         if self.receiver:
             self.receiver.stop()
             self.receiver = None
@@ -400,6 +456,8 @@ class DesktopClientWindow(QMainWindow):
 
     def _handle_frame(self, frame_bytes: bytes):
         self.last_frame_bytes = frame_bytes
+        if self.recorder and self.recorder.is_recording:
+            self.recorder.add_frame(frame_bytes)
         img = QImage.fromData(frame_bytes)
         if not img.isNull():
             pix = QPixmap.fromImage(img)
@@ -489,6 +547,58 @@ class DesktopClientWindow(QMainWindow):
             self.statusBar.showMessage(f"📸 Snapshot saved to: {target_path}")
         except Exception as e:
             QMessageBox.critical(self, "Snapshot Error", f"Failed to save snapshot: {e}")
+
+    def _toggle_recording(self):
+        if not self.is_connected or not self.last_frame_bytes:
+            self.statusBar.showMessage("Cannot record: Stream is not connected.")
+            return
+
+        if self.recorder and self.recorder.is_recording:
+            self._stop_recording()
+        else:
+            self._start_recording()
+
+    def _start_recording(self):
+        format_str = "mp4" if "mp4" in self.combo_record_format.currentText().lower() else "webp"
+        target_fps = int(self.current_fps) if self.current_fps > 5 else 30
+        self.recorder = StreamRecorder(format_type=format_str, fps=target_fps)
+        out_path = self.recorder.start()
+
+        self.btn_record.setText("⏹️ Stop (00:00)")
+        self.btn_record.setObjectName("btnRecordActive")
+        self.btn_record.setStyleSheet("background-color: #b91c1c; border-color: #991b1b; color: white;")
+        self.combo_record_format.setEnabled(False)
+
+        self.video_widget.set_recording(True, "00:00")
+        self.record_timer.start(500)
+        self.statusBar.showMessage(f"🔴 Recording started ({format_str.upper()}): {out_path.name}")
+
+    def _update_record_timer(self):
+        if self.recorder and self.recorder.is_recording:
+            time_str = self.recorder.elapsed_str
+            self.btn_record.setText(f"⏹️ Stop ({time_str})")
+            self.video_widget.set_recording(True, time_str)
+
+    def _stop_recording(self):
+        if not self.recorder or not self.recorder.is_recording:
+            return
+
+        self.record_timer.stop()
+        self.statusBar.showMessage("Finalizing recording...")
+        path, duration, frames = self.recorder.stop()
+
+        self.btn_record.setText("🔴 Record")
+        self.btn_record.setObjectName("btnRecord")
+        self.btn_record.setStyleSheet("")
+        self.combo_record_format.setEnabled(True)
+        self.video_widget.set_recording(False, "")
+
+        if path and path.exists():
+            size_mb = path.stat().st_size / (1024 * 1024)
+            msg = f"🎥 Recording saved to: {path} ({duration:.1f}s, {frames} frames, {size_mb:.2f} MB)"
+            self.statusBar.showMessage(msg)
+        else:
+            self.statusBar.showMessage("Recording finished (no frames saved).")
 
     def _toggle_flip_h(self):
         if self.is_connected:

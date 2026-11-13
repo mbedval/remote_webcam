@@ -32,7 +32,7 @@ def print_banner(host: str, port: int, capture_mgr: CaptureManager):
     print("=" * 62)
     print(" Detected Cameras:")
     if not cams:
-        print("   ⚠️  No video capture devices found in /dev/video*")
+        print("   ⚠️  No video capture devices found.")
     else:
         for cam in cams:
             marker = "⭐ [ACTIVE]" if cam.index == capture_mgr.camera_index else "  "

@@ -6,15 +6,18 @@ dynamic camera switching (internal <-> USB <-> Android phone), resolution scalin
 """
 
 import time
+import sys
 import threading
 import logging
 import urllib.request
 import urllib.error
+from pathlib import Path
 from typing import Optional, Dict, Any, Generator, Tuple
 import cv2
 import numpy as np
 
 from .camera_detector import CameraDetector, CameraInfo
+from client.recorder import StreamRecorder
 
 logger = logging.getLogger("CaptureManager")
 
@@ -63,6 +66,9 @@ class CaptureManager:
 
         self._active_viewers = 0
         self._switching_camera = False
+
+        self._recorder: Optional[StreamRecorder] = None
+        self._recordings_dir = Path(__file__).resolve().parent.parent / "recordings"
 
         # Detect initial camera info
         self.cameras = CameraDetector.detect_cameras()
@@ -129,17 +135,30 @@ class CaptureManager:
         return enc.tobytes()
 
     def _open_camera(self, index: int) -> Optional[cv2.VideoCapture]:
-        """Attempts to open a V4L2 camera by index and sets optimal properties."""
+        """Attempts to open a camera by index and sets optimal properties across OS platforms."""
         if index >= 100:
             return None  # Android camera handled via HTTP/ADB stream
 
-        logger.info(f"Opening camera /dev/video{index}...")
-        cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
-        if not cap.isOpened():
-            cap = cv2.VideoCapture(index)
+        if sys.platform == "win32":
+            logger.info(f"Opening camera index {index} (DirectShow)...")
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(index, cv2.CAP_MSMF)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(index)
+        elif sys.platform == "darwin":
+            logger.info(f"Opening camera index {index} (AVFoundation)...")
+            cap = cv2.VideoCapture(index, cv2.CAP_AVFOUNDATION)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(index)
+        else:
+            logger.info(f"Opening camera /dev/video{index} (V4L2)...")
+            cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(index)
 
         if not cap.isOpened():
-            logger.error(f"Failed to open camera /dev/video{index}")
+            logger.error(f"Failed to open camera index {index}")
             return None
 
         try:
@@ -261,6 +280,9 @@ class CaptureManager:
                 continue
 
             raw_jpeg = enc_bytes.tobytes()
+
+            if self._recorder and self._recorder.is_recording:
+                self._recorder.add_frame(raw_jpeg)
 
             with self._condition:
                 self._current_raw_frame = frame
@@ -414,5 +436,65 @@ class CaptureManager:
             "flipHorizontal": self.flip_horizontal,
             "flipVertical": self.flip_vertical,
             "jpegQuality": self.jpeg_quality,
+            "isRecording": bool(self._recorder and self._recorder.is_recording),
+            "recordingDuration": self._recorder.elapsed_seconds if self._recorder and self._recorder.is_recording else 0.0,
             "cameras": [c.to_dict() for c in CameraDetector.detect_cameras()],
         }
+
+    def start_recording(self, format_type: str = "mp4") -> Dict[str, Any]:
+        """Starts server-side recording."""
+        with self._lock:
+            if self._recorder and self._recorder.is_recording:
+                return {
+                    "recording": True,
+                    "alreadyRunning": True,
+                    "path": str(self._recorder.file_path),
+                    "filename": self._recorder.file_path.name if self._recorder.file_path else None,
+                    "format": self._recorder.format_type,
+                    "duration": self._recorder.elapsed_seconds,
+                }
+            self._recordings_dir.mkdir(parents=True, exist_ok=True)
+            self._recorder = StreamRecorder(
+                output_dir=self._recordings_dir,
+                format_type=format_type,
+                fps=self.target_fps,
+            )
+            out_path = self._recorder.start()
+            return {
+                "recording": True,
+                "path": str(out_path),
+                "filename": out_path.name,
+                "format": format_type,
+            }
+
+    def stop_recording(self) -> Dict[str, Any]:
+        """Stops server-side recording."""
+        with self._lock:
+            if not self._recorder or not self._recorder.is_recording:
+                return {"recording": False, "message": "No active recording."}
+            path, duration, frames = self._recorder.stop()
+            size = path.stat().st_size if path and path.exists() else 0
+            res = {
+                "recording": False,
+                "path": str(path) if path else None,
+                "filename": path.name if path else None,
+                "duration": duration,
+                "frames": frames,
+                "sizeBytes": size,
+            }
+            self._recorder = None
+            return res
+
+    def get_recording_status(self) -> Dict[str, Any]:
+        """Returns the current server-side recording status."""
+        with self._lock:
+            if self._recorder and self._recorder.is_recording:
+                return {
+                    "isRecording": True,
+                    "format": self._recorder.format_type,
+                    "duration": self._recorder.elapsed_seconds,
+                    "durationStr": self._recorder.elapsed_str,
+                    "frames": self._recorder.frame_count,
+                    "filename": self._recorder.file_path.name if self._recorder.file_path else None,
+                }
+            return {"isRecording": False}

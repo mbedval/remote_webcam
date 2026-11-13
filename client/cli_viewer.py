@@ -12,6 +12,7 @@ import numpy as np
 
 from .api import RemoteWebcamApi
 from .mjpeg_receiver import MjpegReceiver
+from .recorder import StreamRecorder
 
 
 def run_cli_viewer(host: str = "127.0.0.1", port: int = 8080):
@@ -32,6 +33,7 @@ def run_cli_viewer(host: str = "127.0.0.1", port: int = 8080):
 
     print("\nKeyboard Controls:")
     print("  • 'q': Quit viewer")
+    print("  • 'r': Start / stop local recording (.mp4)")
     print("  • 's': Save high-res snapshot")
     print("  • 'c': Cycle to next camera (Internal <-> External USB)")
     print("  • '1': 480p | '2': 720p | '3': 1080p")
@@ -39,9 +41,12 @@ def run_cli_viewer(host: str = "127.0.0.1", port: int = 8080):
 
     latest_frame: list[np.ndarray] = [None]
     frame_ready = False
+    recorder = None
 
     def on_frame(jpeg_bytes: bytes):
         nonlocal frame_ready
+        if recorder and recorder.is_recording:
+            recorder.add_frame(jpeg_bytes)
         np_arr = np.frombuffer(jpeg_bytes, np.uint8)
         img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         if img is not None:
@@ -72,11 +77,32 @@ def run_cli_viewer(host: str = "127.0.0.1", port: int = 8080):
                     cv2.LINE_AA,
                 )
 
+                if recorder and recorder.is_recording:
+                    rec_hud = f"● REC {recorder.elapsed_str}"
+                    cv2.putText(
+                        display_img,
+                        rec_hud,
+                        (display_img.shape[1] - 180, 35),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 0, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+
                 cv2.imshow(window_name, display_img)
 
             key = cv2.waitKey(20) & 0xFF
             if key == ord("q") or key == 27:  # 'q' or ESC
                 break
+            elif key == ord("r"):
+                if recorder and recorder.is_recording:
+                    path, dur, frames = recorder.stop()
+                    print(f"⏹️ Recording saved: {path} ({dur:.1f}s, {frames} frames)")
+                else:
+                    recorder = StreamRecorder(format_type="mp4", fps=30)
+                    out = recorder.start()
+                    print(f"🔴 Recording started: {out}")
             elif key == ord("s"):
                 if latest_frame[0] is not None:
                     pic_dir = Path.home() / "Pictures" / "RemoteWebcam"
@@ -102,6 +128,8 @@ def run_cli_viewer(host: str = "127.0.0.1", port: int = 8080):
                 api.toggle_flip_v()
 
     finally:
+        if recorder and recorder.is_recording:
+            recorder.stop()
         receiver.stop()
         cv2.destroyAllWindows()
         print("[CLI Viewer] Stopped.")

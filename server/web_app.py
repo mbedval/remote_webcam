@@ -84,6 +84,7 @@ def create_app(capture_mgr: CaptureManager, host: str = "0.0.0.0", port: int = 8
                 "Cache-Control": "no-cache, no-store, must-revalidate",
                 "Pragma": "no-cache",
                 "Expires": "0",
+                "Access-Control-Allow-Origin": "*",
             },
         )
 
@@ -201,6 +202,15 @@ def create_app(capture_mgr: CaptureManager, host: str = "0.0.0.0", port: int = 8
             flipped = capture_mgr.toggle_flip_v()
             result["flipVertical"] = flipped
 
+        elif action == "record_start":
+            fmt = (value or "mp4").lower()
+            rec_res = capture_mgr.start_recording(format_type=fmt)
+            result.update(rec_res)
+
+        elif action == "record_stop":
+            rec_res = capture_mgr.stop_recording()
+            result.update(rec_res)
+
         elif action == "torch":
             # If Android phone is active, forward torch control
             if capture_mgr.is_android_camera:
@@ -224,6 +234,29 @@ def create_app(capture_mgr: CaptureManager, host: str = "0.0.0.0", port: int = 8
             result["message"] = f"Unknown action: {action}"
 
         return JSONResponse(result)
+
+    @app.api_route("/record/start", methods=["GET", "POST"])
+    async def record_start(format: str = Query("mp4")):
+        res = capture_mgr.start_recording(format_type=format)
+        return JSONResponse(res)
+
+    @app.api_route("/record/stop", methods=["GET", "POST"])
+    async def record_stop():
+        res = capture_mgr.stop_recording()
+        return JSONResponse(res)
+
+    @app.get("/record/status")
+    async def record_status():
+        res = capture_mgr.get_recording_status()
+        return JSONResponse(res)
+
+    @app.get("/record/download/{filename}")
+    async def record_download(filename: str):
+        filepath = capture_mgr._recordings_dir / filename
+        if filepath.exists() and filepath.is_file():
+            mime = "video/mp4" if filename.endswith(".mp4") else "image/webp"
+            return FileResponse(filepath, filename=filename, media_type=mime)
+        return JSONResponse({"error": "File not found"}, status_code=404)
 
     @app.get("/health")
     async def health():

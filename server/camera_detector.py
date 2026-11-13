@@ -5,14 +5,22 @@ and connected Android smartphones via USB ADB.
 """
 
 import os
+import sys
 import glob
-import fcntl
+import json
 import struct
 import shutil
 import subprocess
 import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
+
+import cv2
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 logger = logging.getLogger("CameraDetector")
 
@@ -49,6 +57,8 @@ class CameraDetector:
     @staticmethod
     def _is_capture_device(device_path: str) -> tuple[bool, str, str, str]:
         """Queries V4L2 capability to check if the device supports video capture."""
+        if fcntl is None:
+            return False, "", "", ""
         try:
             fd = os.open(device_path, os.O_RDWR | os.O_NONBLOCK)
             buf = bytearray(104)
@@ -82,7 +92,8 @@ class CameraDetector:
                 removable_path = os.path.join(curr, "removable")
                 if os.path.exists(removable_path):
                     try:
-                        val = open(removable_path, "r").read().strip().lower()
+                        with open(removable_path, "r") as f:
+                            val = f.read().strip().lower()
                         if val == "fixed":
                             return "internal"
                         elif val == "removable":
@@ -135,10 +146,8 @@ class CameraDetector:
             return False
 
     @classmethod
-    def detect_cameras(cls) -> List[CameraInfo]:
-        """
-        Scans all /dev/video* devices and connected ADB Android phones.
-        """
+    def _detect_linux_cameras(cls) -> List[CameraInfo]:
+        """Scans all /dev/video* devices via V4L2 and sysfs on Linux."""
         cameras: List[CameraInfo] = []
         device_paths = sorted(
             glob.glob("/dev/video*"),
@@ -147,7 +156,6 @@ class CameraDetector:
             else 999,
         )
 
-        # 1. Local V4L2 cameras (internal & USB webcams)
         for dev_path in device_paths:
             dev_name = os.path.basename(dev_path)
             if not dev_name.replace("video", "").isdigit():
@@ -177,8 +185,120 @@ class CameraDetector:
                     bus_info=bus,
                 )
             )
+        return cameras
 
-        # 2. Connected Android Phones via ADB
+    @classmethod
+    def _detect_windows_cameras(cls) -> List[CameraInfo]:
+        """
+        Discovers cameras on Windows using PowerShell PnP entity enumeration
+        and OpenCV DirectShow backend probing.
+        """
+        pnp_cameras = []
+        if shutil.which("powershell"):
+            try:
+                cmd = [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPClass -in 'Camera','Image' } | Select-Object -Property Name, DeviceID, Present, Status | ConvertTo-Json",
+                ]
+                output = subprocess.check_output(cmd, timeout=3, stderr=subprocess.DEVNULL).decode("utf-8", "ignore").strip()
+                if output:
+                    data = json.loads(output)
+                    if isinstance(data, dict):
+                        data = [data]
+                    for item in data:
+                        name = (item.get("Name") or "").strip()
+                        status = (item.get("Status") or "").upper()
+                        if name and status in ("OK", ""):
+                            pnp_cameras.append({
+                                "name": name,
+                                "device_id": item.get("DeviceID", ""),
+                            })
+            except Exception as e:
+                logger.debug(f"PowerShell camera scan error: {e}")
+
+        cameras: List[CameraInfo] = []
+        # Probe indices 0..9 with DirectShow (fast and standard on Windows)
+        for idx in range(10):
+            try:
+                cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+                if not cap.isOpened():
+                    cap = cv2.VideoCapture(idx)
+                if cap.isOpened():
+                    cap.release()
+
+                    if idx < len(pnp_cameras):
+                        card_clean = pnp_cameras[idx]["name"]
+                        bus = pnp_cameras[idx]["device_id"]
+                    else:
+                        card_clean = f"Camera {idx}"
+                        bus = f"DirectShowDevice_{idx}"
+
+                    cam_type = "external_usb"
+                    name_lower = card_clean.lower()
+                    for kw in cls.COMMON_INTERNAL_KEYWORDS:
+                        if kw in name_lower:
+                            cam_type = "internal"
+                            break
+
+                    type_label = "Internal Webcam" if cam_type == "internal" else "External USB Webcam"
+                    display_name = f"{type_label} [{card_clean}] (Device {idx})"
+
+                    cameras.append(
+                        CameraInfo(
+                            index=idx,
+                            path=f"video{idx}",
+                            name=card_clean,
+                            camera_type=cam_type,
+                            card_name=card_clean,
+                            display_name=display_name,
+                            driver="DirectShow",
+                            bus_info=bus,
+                        )
+                    )
+            except Exception as e:
+                logger.debug(f"Error probing camera index {idx}: {e}")
+
+        return cameras
+
+    @classmethod
+    def _detect_generic_cameras(cls) -> List[CameraInfo]:
+        """Probes generic camera indices on other platforms (e.g. macOS)."""
+        cameras = []
+        for idx in range(10):
+            try:
+                cap = cv2.VideoCapture(idx)
+                if cap.isOpened():
+                    cap.release()
+                    cameras.append(
+                        CameraInfo(
+                            index=idx,
+                            path=f"video{idx}",
+                            name=f"Camera {idx}",
+                            camera_type="external_usb",
+                            card_name=f"Camera {idx}",
+                            display_name=f"Camera [{idx}]",
+                            driver="OpenCV",
+                        )
+                    )
+            except Exception:
+                pass
+        return cameras
+
+    @classmethod
+    def detect_cameras(cls) -> List[CameraInfo]:
+        """
+        Scans video devices across Linux, Windows, macOS, and connected ADB Android phones.
+        """
+        if sys.platform == "win32":
+            cameras = cls._detect_windows_cameras()
+        elif sys.platform.startswith("linux"):
+            cameras = cls._detect_linux_cameras()
+        else:
+            cameras = cls._detect_generic_cameras()
+
+        # Connected Android Phones via ADB
         adb_devices = cls.get_adb_devices()
         for idx, dev in enumerate(adb_devices):
             phone_index = 100 + idx

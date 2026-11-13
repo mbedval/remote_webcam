@@ -132,6 +132,42 @@ class RemoteWebcamApi:
             return None
         return None
 
+    def start_server_recording(self, format_type: str = "mp4") -> Dict[str, Any]:
+        """Requests the server to begin recording directly on the host machine."""
+        url = f"{self.base_url}/record/start?format={urllib.parse.quote(format_type)}"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "RemoteWebcamClient/1.0"})
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                if resp.status == 200:
+                    return json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            return {"error": str(e)}
+        return {"error": "Failed to start server recording"}
+
+    def stop_server_recording(self) -> Dict[str, Any]:
+        """Requests the server to stop recording and finalize output file."""
+        url = f"{self.base_url}/record/stop"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "RemoteWebcamClient/1.0"})
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                if resp.status == 200:
+                    return json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            return {"error": str(e)}
+        return {"error": "Failed to stop server recording"}
+
+    def get_recording_status(self) -> Dict[str, Any]:
+        """Fetches active recording status from server."""
+        url = f"{self.base_url}/record/status"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "RemoteWebcamClient/1.0"})
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                if resp.status == 200:
+                    return json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            return {"error": str(e)}
+        return {"isRecording": False}
+
     @staticmethod
     def scan_local_network(port: int = 8080, timeout: float = 0.4) -> List[Dict[str, Any]]:
         """
