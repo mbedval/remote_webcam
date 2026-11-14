@@ -338,7 +338,10 @@
       }
 
       try {
-        recordCtx.drawImage(videoStream, 0, 0, recordCanvas.width, recordCanvas.height);
+        // If frame is active use the already-composited frameCanvas; else raw stream
+        const wsrc = (typeof frameState !== "undefined" && frameState.active && frameCanvas && frameCanvas.style.display !== "none")
+          ? frameCanvas : videoStream;
+        recordCtx.drawImage(wsrc, 0, 0, recordCanvas.width, recordCanvas.height);
         recordCanvas.toBlob(
           (blob) => {
             if (blob && isRecording) {
@@ -366,7 +369,10 @@
         recordCanvas.height = h;
       }
       try {
-        recordCtx.drawImage(videoStream, 0, 0, recordCanvas.width, recordCanvas.height);
+        // If frame is active use the already-composited frameCanvas; else raw stream
+        const src = (typeof frameState !== "undefined" && frameState.active && frameCanvas && frameCanvas.style.display !== "none")
+          ? frameCanvas : videoStream;
+        recordCtx.drawImage(src, 0, 0, recordCanvas.width, recordCanvas.height);
       } catch (e) {
         console.warn("Draw image failed:", e);
       }
@@ -570,6 +576,8 @@
       btnSnapshot.click();
     } else if (e.key.toLowerCase() === "r") {
       btnRecord.click();
+    } else if (e.key.toLowerCase() === "m") {
+      btnFrame.click();
     }
   });
 
@@ -636,6 +644,219 @@
       console.debug("Audio device enumeration:", e);
     }
   }
+
+
+  // ════════════════════════════════════════════════════════
+  //  FRAME FEATURE  –  shape mask overlay on live + record
+  // ════════════════════════════════════════════════════════
+  const framePanel   = document.getElementById("framePanel");
+  const frameCanvas  = document.getElementById("frameCanvas");
+  const btnFrame     = document.getElementById("btnFrame");
+  const btnFrameOff  = document.getElementById("btnFrameOff");
+  const frameShapeRow = document.getElementById("frameShapeRow");
+
+  const frameBorderWidthInput = document.getElementById("frameBorderWidth");
+  const frameBorderWidthVal   = document.getElementById("frameBorderWidthVal");
+  const frameColorInput       = document.getElementById("frameColor");
+  const frameWInput  = document.getElementById("frameW");
+  const frameHInput  = document.getElementById("frameH");
+  const frameXInput  = document.getElementById("frameX");
+  const frameYInput  = document.getElementById("frameY");
+  const frameWVal    = document.getElementById("frameWVal");
+  const frameHVal    = document.getElementById("frameHVal");
+  const frameXVal    = document.getElementById("frameXVal");
+  const frameYVal    = document.getElementById("frameYVal");
+  const frameBgInput        = document.getElementById("frameBg");
+  const frameBgOpacityInput = document.getElementById("frameBgOpacity");
+  const frameBgOpacityVal   = document.getElementById("frameBgOpacityVal");
+
+  const frameCtx = frameCanvas ? frameCanvas.getContext("2d") : null;
+
+  // Frame state
+  const frameState = {
+    active: false,
+    shape: "square",        // square | rectangle | circle | oval | triangle
+    borderWidth: 6,
+    borderColor: "#ffffff",
+    visW: 80,               // % of canvas width for the visible window
+    visH: 80,               // % of canvas height
+    centerX: 50,            // % horizontal centre of window
+    centerY: 50,            // % vertical centre
+    bgColor: "#000000",
+    bgOpacity: 100,         // 0-100
+  };
+
+  let frameAnimId = null;
+
+  /** Draw one frame of the frame-masked composite onto frameCanvas */
+  function drawFrameCanvas() {
+    if (!frameState.active || !frameCanvas || !frameCtx) return;
+
+    const cw = frameCanvas.width  = videoStream.naturalWidth  || frameCanvas.offsetWidth  || 1280;
+    const ch = frameCanvas.height = videoStream.naturalHeight || frameCanvas.offsetHeight || 720;
+
+    // Window dimensions + position
+    const ww = (frameState.visW / 100) * cw;
+    const wh = (frameState.visH / 100) * ch;
+    const wx = (frameState.centerX / 100) * cw - ww / 2;
+    const wy = (frameState.centerY / 100) * ch - wh / 2;
+
+    // 1. Draw video source
+    try {
+      frameCtx.drawImage(videoStream, 0, 0, cw, ch);
+    } catch (e) {
+      frameAnimId = requestAnimationFrame(drawFrameCanvas);
+      return;
+    }
+
+    // 2. Build shape clip path
+    frameCtx.save();
+    frameCtx.beginPath();
+    applyFrameClipPath(frameCtx, frameState.shape, wx, wy, ww, wh);
+    frameCtx.clip();
+
+    // 3. Re-draw video inside the clip (so only inside is crisp)
+    frameCtx.drawImage(videoStream, 0, 0, cw, ch);
+    frameCtx.restore();
+
+    // 4. Draw darkened / coloured backdrop OUTSIDE the shape
+    const r = hexToRgb(frameState.bgColor);
+    const alpha = frameState.bgOpacity / 100;
+    frameCtx.save();
+    frameCtx.beginPath();
+    frameCtx.rect(0, 0, cw, ch);              // whole canvas
+    applyFrameClipPath(frameCtx, frameState.shape, wx, wy, ww, wh);  // subtract shape
+    frameCtx.fillStyle = `rgba(${r.r},${r.g},${r.b},${alpha})`;
+    frameCtx.fill("evenodd");
+    frameCtx.restore();
+
+    // 5. Draw shape border
+    if (frameState.borderWidth > 0) {
+      frameCtx.save();
+      frameCtx.beginPath();
+      applyFrameClipPath(frameCtx, frameState.shape, wx, wy, ww, wh);
+      frameCtx.strokeStyle = frameState.borderColor;
+      frameCtx.lineWidth   = frameState.borderWidth;
+      frameCtx.stroke();
+      frameCtx.restore();
+    }
+
+    frameAnimId = requestAnimationFrame(drawFrameCanvas);
+  }
+
+  /** Add a shape to the current ctx path */
+  function applyFrameClipPath(ctx, shape, x, y, w, h) {
+    switch (shape) {
+      case "circle": {
+        const r = Math.min(w, h) / 2;
+        ctx.arc(x + w / 2, y + h / 2, r, 0, Math.PI * 2);
+        break;
+      }
+      case "oval":
+        ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+        break;
+      case "triangle": {
+        ctx.moveTo(x + w / 2, y);
+        ctx.lineTo(x + w,     y + h);
+        ctx.lineTo(x,          y + h);
+        ctx.closePath();
+        break;
+      }
+      case "square": {
+        const side = Math.min(w, h);
+        const sx   = x + (w - side) / 2;
+        const sy   = y + (h - side) / 2;
+        ctx.rect(sx, sy, side, side);
+        break;
+      }
+      default: // rectangle
+        ctx.rect(x, y, w, h);
+    }
+  }
+
+  /** hex "#rrggbb" → {r,g,b} */
+  function hexToRgb(hex) {
+    const r = parseInt(hex.slice(1, 3), 16) || 0;
+    const g = parseInt(hex.slice(3, 5), 16) || 0;
+    const b = parseInt(hex.slice(5, 7), 16) || 0;
+    return { r, g, b };
+  }
+
+  function startFrameOverlay() {
+    frameState.active = true;
+    frameCanvas.style.display = "block";
+    videoStream.style.opacity = "0";   // hide raw stream; canvas takes over
+    btnFrame.classList.add("btn-frame-active");
+    if (frameAnimId) cancelAnimationFrame(frameAnimId);
+    drawFrameCanvas();
+  }
+
+  function stopFrameOverlay() {
+    frameState.active = false;
+    if (frameAnimId) { cancelAnimationFrame(frameAnimId); frameAnimId = null; }
+    frameCanvas.style.display = "none";
+    videoStream.style.opacity = "1";
+    btnFrame.classList.remove("btn-frame-active");
+    framePanel.style.display = "none";
+  }
+
+  // Toggle button in header
+  btnFrame.addEventListener("click", () => {
+    if (frameState.active) {
+      stopFrameOverlay();
+    } else {
+      framePanel.style.display = "block";
+      startFrameOverlay();
+    }
+  });
+
+  // "Off" button inside panel
+  if (btnFrameOff) {
+    btnFrameOff.addEventListener("click", () => {
+      stopFrameOverlay();
+    });
+  }
+
+  // Shape picker
+  if (frameShapeRow) {
+    frameShapeRow.querySelectorAll(".frame-shape-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        frameShapeRow.querySelectorAll(".frame-shape-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        frameState.shape = btn.dataset.shape;
+      });
+    });
+  }
+
+  // Slider helpers
+  function bindSlider(input, stateKey, valEl, suffix) {
+    if (!input) return;
+    input.addEventListener("input", () => {
+      frameState[stateKey] = Number(input.value);
+      if (valEl) valEl.textContent = input.value + suffix;
+    });
+  }
+
+  bindSlider(frameBorderWidthInput, "borderWidth", frameBorderWidthVal, "px");
+  bindSlider(frameWInput,  "visW",    frameWVal, "%");
+  bindSlider(frameHInput,  "visH",    frameHVal, "%");
+  bindSlider(frameXInput,  "centerX", frameXVal, "%");
+  bindSlider(frameYInput,  "centerY", frameYVal, "%");
+  bindSlider(frameBgOpacityInput, "bgOpacity", frameBgOpacityVal, "%");
+
+  if (frameColorInput) {
+    frameColorInput.addEventListener("input", () => {
+      frameState.borderColor = frameColorInput.value;
+    });
+  }
+  if (frameBgInput) {
+    frameBgInput.addEventListener("input", () => {
+      frameState.bgColor = frameBgInput.value;
+    });
+  }
+
+  // Keyboard shortcut M = toggle frame
+  // (added into existing keydown listener below)
 
   // Init
   updateServerDisplay();

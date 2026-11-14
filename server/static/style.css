@@ -488,3 +488,123 @@ body {
   gap: 10px;
   margin-top: 8px;
 }
+
+/* ═══════════════════════════════
+   FRAME FEATURE STYLES
+   ═══════════════════════════════ */
+
+/* Panel that slides in below the header */
+.frame-panel {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 14px 20px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+
+.frame-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.frame-panel-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text-main);
+}
+
+.btn-sm {
+  padding: 5px 11px;
+  font-size: 0.8rem;
+}
+
+.frame-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.frame-control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 130px;
+}
+
+/* Shape picker buttons */
+.frame-shape-row {
+  display: flex;
+  gap: 6px;
+}
+
+.frame-shape-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  background-color: var(--bg-tertiary);
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.frame-shape-btn:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.frame-shape-btn.active {
+  border-color: var(--accent-color);
+  background-color: rgba(59,130,246,0.15);
+  color: var(--accent-color);
+}
+
+/* Range sliders */
+.frame-range {
+  width: 100%;
+  accent-color: var(--accent-color);
+  cursor: pointer;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.frame-range-val {
+  font-size: 0.75rem;
+  color: var(--accent-color);
+  font-weight: 600;
+  min-width: 32px;
+}
+
+/* Colour swatch input */
+.frame-color-input {
+  width: 100%;
+  height: 36px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+  padding: 2px;
+}
+
+/* Frame canvas sits on top of the hidden img */
+.frame-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Active frame button in header */
+.btn-frame-active {
+  background-color: rgba(59,130,246,0.2) !important;
+  border-color: var(--accent-color) !important;
+  color: var(--accent-color) !important;
+}

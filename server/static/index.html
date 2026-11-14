@@ -54,6 +54,9 @@
 
         <div class="header-divider"></div>
 
+        <!-- Frame Toggle -->
+        <button class="btn btn-secondary" id="btnFrame" title="Toggle photo-frame mask overlay (Shortcut: M)">🖼️ Frame</button>
+
         <!-- Settings / Connect -->
         <button class="btn btn-secondary" id="btnSettings" title="Configure Server IP & Port">
           ⚙️ Connect Server
@@ -61,10 +64,72 @@
       </div>
     </header>
 
+    <!-- Frame Controls Panel (hidden until Frame is ON) -->
+    <section class="frame-panel" id="framePanel" style="display:none;">
+      <div class="frame-panel-header">
+        <span class="frame-panel-title">🖼️ Frame Settings</span>
+        <button class="btn btn-secondary btn-sm" id="btnFrameOff" title="Turn off frame overlay">✕ Off</button>
+      </div>
+      <div class="frame-controls">
+        <!-- Shape Picker -->
+        <div class="frame-control-group">
+          <label class="control-label">Shape</label>
+          <div class="frame-shape-row" id="frameShapeRow">
+            <button class="frame-shape-btn active" data-shape="square"    title="Square">■</button>
+            <button class="frame-shape-btn"        data-shape="rectangle" title="Rectangle">⬬</button>
+            <button class="frame-shape-btn"        data-shape="circle"    title="Circle">●</button>
+            <button class="frame-shape-btn"        data-shape="oval"      title="Oval">⬭</button>
+            <button class="frame-shape-btn"        data-shape="triangle"  title="Triangle">▲</button>
+          </div>
+        </div>
+
+        <!-- Border colour + width -->
+        <div class="frame-control-group">
+          <label class="control-label">Border Color</label>
+          <input type="color" id="frameColor" value="#ffffff" class="frame-color-input" title="Frame border colour" />
+        </div>
+        <div class="frame-control-group">
+          <label class="control-label">Border Width <span class="frame-range-val" id="frameBorderWidthVal">6px</span></label>
+          <input type="range" id="frameBorderWidth" min="0" max="40" value="6" class="frame-range" />
+        </div>
+
+        <!-- Visible-area sliders -->
+        <div class="frame-control-group">
+          <label class="control-label">Visible Width <span class="frame-range-val" id="frameWVal">80%</span></label>
+          <input type="range" id="frameW" min="10" max="100" value="80" class="frame-range" />
+        </div>
+        <div class="frame-control-group">
+          <label class="control-label">Visible Height <span class="frame-range-val" id="frameHVal">80%</span></label>
+          <input type="range" id="frameH" min="10" max="100" value="80" class="frame-range" />
+        </div>
+        <div class="frame-control-group">
+          <label class="control-label">Center X <span class="frame-range-val" id="frameXVal">50%</span></label>
+          <input type="range" id="frameX" min="0" max="100" value="50" class="frame-range" />
+        </div>
+        <div class="frame-control-group">
+          <label class="control-label">Center Y <span class="frame-range-val" id="frameYVal">50%</span></label>
+          <input type="range" id="frameY" min="0" max="100" value="50" class="frame-range" />
+        </div>
+
+        <!-- Background colour + opacity -->
+        <div class="frame-control-group">
+          <label class="control-label">Background</label>
+          <input type="color" id="frameBg" value="#000000" class="frame-color-input" title="Outside background colour" />
+        </div>
+        <div class="frame-control-group">
+          <label class="control-label">BG Opacity <span class="frame-range-val" id="frameBgOpacityVal">100%</span></label>
+          <input type="range" id="frameBgOpacity" min="0" max="100" value="100" class="frame-range" />
+        </div>
+      </div>
+    </section>
+
     <!-- Main Player Section -->
     <main class="player-container">
       <div class="video-wrapper" id="videoWrapper">
+        <!-- Source img (hidden when frame canvas is active) -->
         <img id="videoStream" src="/video" alt="Webcam Stream" class="video-feed" crossOrigin="anonymous" />
+        <!-- Frame canvas overlay -->
+        <canvas id="frameCanvas" class="video-feed frame-canvas" style="display:none;"></canvas>
 
         <!-- Live HUD Overlay -->
         <div class="hud-overlay" id="hudOverlay">
