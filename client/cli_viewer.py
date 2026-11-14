@@ -37,6 +37,7 @@ def run_cli_viewer(host: str = "127.0.0.1", port: int = 8080):
     print("  • 's': Save high-res snapshot")
     print("  • 'c': Cycle to next camera (Internal <-> External USB)")
     print("  • '1': 480p | '2': 720p | '3': 1080p")
+    print("  • '4': 15 FPS (Zero Delay) | '5': 20 FPS | '6': 30 FPS")
     print("  • 'h': Flip horizontal | 'v': Flip vertical\n")
 
     latest_frame: list[np.ndarray] = [None]
@@ -122,6 +123,15 @@ def run_cli_viewer(host: str = "127.0.0.1", port: int = 8080):
             elif key == ord("3"):
                 print("Setting resolution to 1080p...")
                 api.set_resolution("1080p")
+            elif key == ord("4"):
+                print("Setting FPS to 15 (Zero Delay)...")
+                api.send_control({"action": "fps", "value": "15"})
+            elif key == ord("5"):
+                print("Setting FPS to 20...")
+                api.send_control({"action": "fps", "value": "20"})
+            elif key == ord("6"):
+                print("Setting FPS to 30...")
+                api.send_control({"action": "fps", "value": "30"})
             elif key == ord("h"):
                 api.toggle_flip_h()
             elif key == ord("v"):

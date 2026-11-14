@@ -149,6 +149,7 @@ class TestWebClientAssets(unittest.TestCase):
         self.assertIn('id="recordFormat"', html_content)
         self.assertIn('id="btnRecord"', html_content)
         self.assertIn('id="hudRec"', html_content)
+        self.assertIn('id="fpsSelect"', html_content)
         self.assertIn('value="mp4"', html_content)
         self.assertIn('value="webp"', html_content)
 

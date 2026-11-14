@@ -16,6 +16,7 @@
   const cameraSelect = document.getElementById("cameraSelect");
   const btnRescan = document.getElementById("btnRescan");
   const resSelect = document.getElementById("resSelect");
+  const fpsSelect = document.getElementById("fpsSelect");
   const recordFormat = document.getElementById("recordFormat");
   const btnRecord = document.getElementById("btnRecord");
   const recordBtnText = document.getElementById("recordBtnText");
@@ -97,6 +98,9 @@
       if (resSelect.value !== data.resolution) {
         resSelect.value = data.resolution;
       }
+      if (fpsSelect && data.targetFps && fpsSelect.value !== String(data.targetFps)) {
+        fpsSelect.value = String(data.targetFps);
+      }
     } else {
       statusDot.className = "status-dot disconnected";
       fpsDisplay.textContent = "--";
@@ -121,6 +125,14 @@
     await apiFetch(`/control?action=resolution&value=${res}`);
     setTimeout(pollStatus, 400);
   });
+
+  if (fpsSelect) {
+    fpsSelect.addEventListener("change", async () => {
+      const fpsVal = fpsSelect.value;
+      await apiFetch(`/control?action=fps&value=${fpsVal}`);
+      setTimeout(pollStatus, 300);
+    });
+  }
 
   btnSnapshot.addEventListener("click", () => {
     const a = document.createElement("a");

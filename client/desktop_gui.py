@@ -336,6 +336,12 @@ class DesktopClientWindow(QMainWindow):
         self.combo_res.setCurrentText("720p")
         self.combo_res.currentIndexChanged.connect(self._on_resolution_selected)
 
+        lbl_fps = QLabel("⚡ FPS:")
+        self.combo_fps = QComboBox()
+        self.combo_fps.addItems(["30", "24", "20", "15", "10"])
+        self.combo_fps.setCurrentText("15")
+        self.combo_fps.currentIndexChanged.connect(self._on_fps_selected)
+
         lbl_format = QLabel("📼 Record:")
         self.combo_record_format = QComboBox()
         self.combo_record_format.addItems(["MP4 (.mp4)", "WebP (.webp)"])
@@ -365,6 +371,8 @@ class DesktopClientWindow(QMainWindow):
         controls_layout.addWidget(self.btn_refresh_cams)
         controls_layout.addWidget(lbl_res)
         controls_layout.addWidget(self.combo_res)
+        controls_layout.addWidget(lbl_fps)
+        controls_layout.addWidget(self.combo_fps)
         controls_layout.addWidget(lbl_format)
         controls_layout.addWidget(self.combo_record_format)
         controls_layout.addWidget(self.btn_record)
@@ -492,6 +500,15 @@ class DesktopClientWindow(QMainWindow):
                 self.combo_res.setCurrentText(res_name)
                 self.combo_res.blockSignals(False)
 
+            # Sync FPS combo box if changed remotely
+            target_fps = str(status.get("targetFps", ""))
+            if target_fps and self.combo_fps.currentText() != target_fps:
+                idx = self.combo_fps.findText(target_fps)
+                if idx >= 0:
+                    self.combo_fps.blockSignals(True)
+                    self.combo_fps.setCurrentIndex(idx)
+                    self.combo_fps.blockSignals(False)
+
     def _refresh_cameras(self):
         cams = self.api.get_cameras()
         self.combo_cameras.blockSignals(True)
@@ -530,6 +547,14 @@ class DesktopClientWindow(QMainWindow):
         res = self.combo_res.currentText()
         self.api.set_resolution(res)
         self.statusBar.showMessage(f"Resolution set to {res}")
+
+    def _on_fps_selected(self, index: int):
+        if not self.is_connected:
+            return
+        fps_text = self.combo_fps.currentText()
+        if fps_text.isdigit():
+            self.api.send_control({"action": "fps", "value": fps_text})
+            self.statusBar.showMessage(f"Target frame rate set to {fps_text} FPS")
 
     def _take_snapshot(self):
         if not self.last_frame_bytes:

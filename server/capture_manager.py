@@ -161,15 +161,22 @@ class CaptureManager:
             logger.error(f"Failed to open camera index {index}")
             return None
 
+        # Request single-frame buffer to prevent driver queue buildup
         try:
-            fourcc = cv2.VideoWriter_fourcc(*"MJPG")
-            cap.set(cv2.CAP_PROP_FOURCC, fourcc)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         except Exception:
             pass
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.target_width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_height)
         cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+
+        # Set MJPG LAST: on Windows DirectShow, setting resolution/fps overrides FOURCC back to YUY2
+        try:
+            fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+            cap.set(cv2.CAP_PROP_FOURCC, fourcc)
+        except Exception:
+            pass
 
         for _ in range(3):
             ret, _ = cap.read()
@@ -184,6 +191,7 @@ class CaptureManager:
         fps_timer = time.time()
         fps_frame_count = 0
         consecutive_failures = 0
+        last_dispatched = 0.0
 
         while self._running:
             if self._switching_camera:
@@ -277,6 +285,15 @@ class CaptureManager:
 
             consecutive_failures = 0
 
+            # Frame rate pacing: drains USB/DirectShow driver buffer to eliminate lag
+            now = time.time()
+            frame_interval = 1.0 / self.target_fps
+            if (now - last_dispatched) < (frame_interval - 0.003):
+                # Discard extra hardware frame to keep hardware buffer drained (zero-latency sync)
+                continue
+
+            last_dispatched = now
+
             # Flips
             if self.flip_horizontal and self.flip_vertical:
                 frame = cv2.flip(frame, -1)
@@ -313,11 +330,6 @@ class CaptureManager:
                 self._measured_fps = fps_frame_count / (now - fps_timer)
                 fps_frame_count = 0
                 fps_timer = now
-
-            elapsed = time.time() - loop_start
-            sleep_duration = (1.0 / self.target_fps) - elapsed
-            if sleep_duration > 0.001:
-                time.sleep(sleep_duration)
 
     def switch_camera(self, target_index: Optional[int] = None) -> bool:
         """Dynamically switches camera between internal webcam, USB webcam, and Android phone."""
@@ -373,12 +385,24 @@ class CaptureManager:
         if self._cap and self._cap.isOpened():
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
             self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+            # Re-apply FOURCC MJPG because setting width/height on DirectShow resets format to YUY2
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+                self._cap.set(cv2.CAP_PROP_FOURCC, fourcc)
+            except Exception:
+                pass
         return True
 
     def set_fps(self, fps: int):
         self.target_fps = max(5, min(60, fps))
         if self._cap and self._cap.isOpened():
-            self._cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+            try:
+                self._cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+                # Re-apply FOURCC MJPG because setting FPS on DirectShow resets format to YUY2
+                fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+                self._cap.set(cv2.CAP_PROP_FOURCC, fourcc)
+            except Exception:
+                pass
 
     def set_quality(self, quality: int):
         self.jpeg_quality = max(10, min(100, quality))
