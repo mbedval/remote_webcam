@@ -183,6 +183,7 @@ class CaptureManager:
         """Dedicated background capture loop."""
         fps_timer = time.time()
         fps_frame_count = 0
+        consecutive_failures = 0
 
         while self._running:
             if self._switching_camera:
@@ -257,8 +258,24 @@ class CaptureManager:
 
             ret, frame = self._cap.read()
             if not ret or frame is None:
+                consecutive_failures += 1
+                if consecutive_failures >= 30:  # ~1.5s of failed reads
+                    logger.warning(
+                        f"Camera {self.camera_index} dropped frames ({consecutive_failures} failures). "
+                        "Reinitializing camera hardware..."
+                    )
+                    try:
+                        if self._cap:
+                            self._cap.release()
+                    except Exception:
+                        pass
+                    time.sleep(0.3)
+                    self._cap = self._open_camera(self.camera_index)
+                    consecutive_failures = 0
                 time.sleep(0.05)
                 continue
+
+            consecutive_failures = 0
 
             # Flips
             if self.flip_horizontal and self.flip_vertical:
@@ -304,7 +321,7 @@ class CaptureManager:
 
     def switch_camera(self, target_index: Optional[int] = None) -> bool:
         """Dynamically switches camera between internal webcam, USB webcam, and Android phone."""
-        self.cameras = CameraDetector.detect_cameras()
+        self.cameras = CameraDetector.detect_cameras(force_refresh=True)
         if not self.cameras:
             logger.warning("No cameras available to switch to")
             return False
@@ -438,7 +455,7 @@ class CaptureManager:
             "jpegQuality": self.jpeg_quality,
             "isRecording": bool(self._recorder and self._recorder.is_recording),
             "recordingDuration": self._recorder.elapsed_seconds if self._recorder and self._recorder.is_recording else 0.0,
-            "cameras": [c.to_dict() for c in CameraDetector.detect_cameras()],
+            "cameras": [c.to_dict() for c in self.cameras],
         }
 
     def start_recording(self, format_type: str = "mp4") -> Dict[str, Any]:

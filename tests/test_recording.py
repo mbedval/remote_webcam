@@ -145,7 +145,7 @@ class TestServerRecordingApi(unittest.TestCase):
 class TestWebClientAssets(unittest.TestCase):
     def test_html_and_css_elements(self):
         index_path = Path(__file__).resolve().parent.parent / "server" / "static" / "index.html"
-        html_content = index_path.read_text()
+        html_content = index_path.read_text(encoding="utf-8")
         self.assertIn('id="recordFormat"', html_content)
         self.assertIn('id="btnRecord"', html_content)
         self.assertIn('id="hudRec"', html_content)
@@ -153,12 +153,12 @@ class TestWebClientAssets(unittest.TestCase):
         self.assertIn('value="webp"', html_content)
 
         style_path = Path(__file__).resolve().parent.parent / "server" / "static" / "style.css"
-        css_content = style_path.read_text()
+        css_content = style_path.read_text(encoding="utf-8")
         self.assertIn(".btn-record", css_content)
         self.assertIn(".badge-rec", css_content)
 
         app_js_path = Path(__file__).resolve().parent.parent / "server" / "static" / "app.js"
-        js_content = app_js_path.read_text()
+        js_content = app_js_path.read_text(encoding="utf-8")
         self.assertIn("buildAnimatedWebP", js_content)
         self.assertIn("startMediaRecorderRecording", js_content)
         self.assertIn("startWebpRecording", js_content)

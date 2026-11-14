@@ -4,11 +4,16 @@ Remote Webcam Server Entrypoint
 Streams laptop internal and external USB webcams to remote clients over HTTP/MJPEG.
 """
 
+import os
 import sys
 import argparse
 import logging
 import signal
 import uvicorn
+
+# Suppress noisy OpenCV backend probe warnings
+os.environ.setdefault("OPENCV_LOG_LEVEL", "OFF")
+os.environ.setdefault("OPENCV_VIDEOIO_DEBUG", "0")
 
 from server.camera_detector import CameraDetector
 from server.capture_manager import CaptureManager
@@ -25,7 +30,7 @@ logger = logging.getLogger("RemoteWebcamServer")
 
 def print_banner(host: str, port: int, capture_mgr: CaptureManager):
     local_ip = get_local_ip()
-    cams = CameraDetector.detect_cameras()
+    cams = capture_mgr.cameras
 
     print("\n" + "=" * 62)
     print("      📹 REMOTE WEBCAM STREAMING SERVER v1.0.0")

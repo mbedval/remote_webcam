@@ -11,11 +11,21 @@ import json
 import struct
 import shutil
 import subprocess
+import time
 import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 
+# Configure OpenCV logging to suppress verbose backend probing warnings
+os.environ.setdefault("OPENCV_LOG_LEVEL", "OFF")
+os.environ.setdefault("OPENCV_VIDEOIO_DEBUG", "0")
+
 import cv2
+try:
+    if hasattr(cv2, "utils") and hasattr(cv2.utils, "logging"):
+        cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+except Exception:
+    pass
 
 try:
     import fcntl
@@ -48,6 +58,15 @@ class CameraInfo:
 
 class CameraDetector:
     """Discovers and classifies local video devices and connected Android devices."""
+
+    _cached_cameras: Optional[List[CameraInfo]] = None
+    _last_scan_time: float = 0.0
+
+    @classmethod
+    def clear_cache(cls):
+        """Clears cached camera detection results."""
+        cls._cached_cameras = None
+        cls._last_scan_time = 0.0
 
     COMMON_INTERNAL_KEYWORDS = [
         "integrated", "easycamera", "facetime", "internal",
@@ -188,10 +207,11 @@ class CameraDetector:
         return cameras
 
     @classmethod
-    def _detect_windows_cameras(cls) -> List[CameraInfo]:
+    def _detect_windows_cameras(cls, active_index: Optional[int] = None) -> List[CameraInfo]:
         """
-        Discovers cameras on Windows using PowerShell PnP entity enumeration
-        and OpenCV DirectShow backend probing.
+        Discovers cameras on Windows using PowerShell PnP entity enumeration.
+        Maps detected physical cameras to DirectShow indices without disruptive
+        VideoCapture probing that breaks active capture graphs on Windows.
         """
         pnp_cameras = []
         if shutil.which("powershell"):
@@ -210,7 +230,8 @@ class CameraDetector:
                     for item in data:
                         name = (item.get("Name") or "").strip()
                         status = (item.get("Status") or "").upper()
-                        if name and status in ("OK", ""):
+                        present = item.get("Present", True)
+                        if name and status in ("OK", "") and present is not False:
                             pnp_cameras.append({
                                 "name": name,
                                 "device_id": item.get("DeviceID", ""),
@@ -219,32 +240,59 @@ class CameraDetector:
                 logger.debug(f"PowerShell camera scan error: {e}")
 
         cameras: List[CameraInfo] = []
-        # Probe indices 0..9 with DirectShow (fast and standard on Windows)
-        for idx in range(10):
+
+        if pnp_cameras:
+            # Map discovered PnP cameras directly to indices without probing with cv2.VideoCapture,
+            # which destroys active DirectShow video capture graphs on Windows.
+            for idx, pnp_cam in enumerate(pnp_cameras):
+                card_clean = pnp_cam["name"]
+                bus = pnp_cam["device_id"]
+                cam_type = cls._determine_type("", card_clean)
+                type_label = "Internal Webcam" if cam_type == "internal" else "External USB Webcam"
+                display_name = f"{type_label} [{card_clean}] (Device {idx})"
+
+                cameras.append(
+                    CameraInfo(
+                        index=idx,
+                        path=f"video{idx}",
+                        name=card_clean,
+                        camera_type=cam_type,
+                        card_name=card_clean,
+                        display_name=display_name,
+                        driver="DirectShow",
+                        bus_info=bus,
+                    )
+                )
+            return cameras
+
+        # Fallback only when PnP scan returned no cameras: probe indices carefully
+        for idx in range(4):
+            if active_index is not None and idx == active_index:
+                cameras.append(
+                    CameraInfo(
+                        index=idx,
+                        path=f"video{idx}",
+                        name=f"Camera {idx}",
+                        camera_type="external_usb",
+                        card_name=f"Camera {idx}",
+                        display_name=f"External USB Webcam [Camera {idx}] (Device {idx})",
+                        driver="DirectShow",
+                        bus_info=f"DirectShowDevice_{idx}",
+                    )
+                )
+                continue
+
             try:
                 cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
                 if not cap.isOpened():
                     cap = cv2.VideoCapture(idx)
                 if cap.isOpened():
                     cap.release()
-
-                    if idx < len(pnp_cameras):
-                        card_clean = pnp_cameras[idx]["name"]
-                        bus = pnp_cameras[idx]["device_id"]
-                    else:
-                        card_clean = f"Camera {idx}"
-                        bus = f"DirectShowDevice_{idx}"
-
-                    cam_type = "external_usb"
-                    name_lower = card_clean.lower()
-                    for kw in cls.COMMON_INTERNAL_KEYWORDS:
-                        if kw in name_lower:
-                            cam_type = "internal"
-                            break
-
+                    card_clean = f"Camera {idx}"
+                    bus = f"DirectShowDevice_{idx}"
+                    cam_type = cls._determine_type("", card_clean)
                     type_label = "Internal Webcam" if cam_type == "internal" else "External USB Webcam"
                     display_name = f"{type_label} [{card_clean}] (Device {idx})"
-
                     cameras.append(
                         CameraInfo(
                             index=idx,
@@ -257,6 +305,8 @@ class CameraDetector:
                             bus_info=bus,
                         )
                     )
+                elif idx >= 1 and not cameras:
+                    break
             except Exception as e:
                 logger.debug(f"Error probing camera index {idx}: {e}")
 
@@ -287,12 +337,26 @@ class CameraDetector:
         return cameras
 
     @classmethod
-    def detect_cameras(cls) -> List[CameraInfo]:
+    def detect_cameras(
+        cls,
+        active_index: Optional[int] = None,
+        force_refresh: bool = False,
+        cache_ttl: float = 5.0,
+    ) -> List[CameraInfo]:
         """
         Scans video devices across Linux, Windows, macOS, and connected ADB Android phones.
+        Caches results for cache_ttl seconds to avoid repeated hardware querying during polling.
         """
+        now = time.time()
+        if (
+            not force_refresh
+            and cls._cached_cameras is not None
+            and (now - cls._last_scan_time) < cache_ttl
+        ):
+            return list(cls._cached_cameras)
+
         if sys.platform == "win32":
-            cameras = cls._detect_windows_cameras()
+            cameras = cls._detect_windows_cameras(active_index=active_index)
         elif sys.platform.startswith("linux"):
             cameras = cls._detect_linux_cameras()
         else:
@@ -320,6 +384,8 @@ class CameraDetector:
                 )
             )
 
+        cls._cached_cameras = list(cameras)
+        cls._last_scan_time = now
         logger.info(f"Discovered {len(cameras)} total video sources: {[c.display_name for c in cameras]}")
         return cameras
 

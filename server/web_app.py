@@ -123,7 +123,8 @@ def create_app(capture_mgr: CaptureManager, host: str = "0.0.0.0", port: int = 8
 
     @app.get("/cameras")
     async def list_cameras():
-        cams = CameraDetector.detect_cameras()
+        cams = CameraDetector.detect_cameras(active_index=capture_mgr.camera_index, force_refresh=True)
+        capture_mgr.cameras = cams
         return JSONResponse({
             "count": len(cams),
             "activeCameraIndex": capture_mgr.camera_index,

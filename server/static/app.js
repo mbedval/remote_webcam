@@ -46,6 +46,13 @@
     videoStream.src = `${serverBaseUrl}/video?t=${Date.now()}`;
   }
 
+  videoStream.addEventListener("error", () => {
+    console.warn("Video stream connection interrupted, retrying in 2 seconds...");
+    setTimeout(() => {
+      videoStream.src = `${serverBaseUrl}/video?t=${Date.now()}`;
+    }, 2000);
+  });
+
   async function apiFetch(endpoint, options = {}) {
     try {
       const res = await fetch(`${serverBaseUrl}${endpoint}`, {

@@ -19,6 +19,9 @@ from client.recorder import StreamRecorder
 
 
 class TestWindowsCompatibility(unittest.TestCase):
+    def setUp(self):
+        CameraDetector.clear_cache()
+
     def test_camera_detector_without_fcntl(self):
         """Verifies CameraDetector operates safely without Unix-only fcntl module."""
         with patch("server.camera_detector.fcntl", None):
@@ -93,10 +96,10 @@ class TestWindowsCompatibility(unittest.TestCase):
         self.assertTrue(ps_server.exists(), "run_server.ps1 must exist")
         self.assertTrue(ps_client.exists(), "run_client.ps1 must exist")
 
-        bat_server_content = bat_server.read_text()
+        bat_server_content = bat_server.read_text(encoding="utf-8")
         self.assertIn("python server.py", bat_server_content)
 
-        bat_client_content = bat_client.read_text()
+        bat_client_content = bat_client.read_text(encoding="utf-8")
         self.assertIn("python client.py", bat_client_content)
 
 
