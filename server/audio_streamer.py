@@ -8,7 +8,7 @@ import sys
 import shutil
 import subprocess
 import logging
-from typing import Generator
+from typing import Generator, Optional
 
 logger = logging.getLogger("AudioStreamer")
 
@@ -19,6 +19,20 @@ class AudioStreamer:
     RATE = 16000
     CHANNELS = 1
     CHUNK_SIZE = 1024  # 1024 samples = 2048 bytes
+
+    @classmethod
+    def get_webcam_mic_name(cls) -> Optional[str]:
+        """Discovers the external USB webcam microphone device name on Windows."""
+        try:
+            from PyQt5.QtMultimedia import QAudioDeviceInfo, QAudio
+            for d in QAudioDeviceInfo.availableDevices(QAudio.AudioInput):
+                name = d.deviceName()
+                name_l = name.lower()
+                if any(k in name_l for k in ("ucamera", "web", "usb")):
+                    return name
+        except Exception:
+            pass
+        return None
 
     @classmethod
     def is_available(cls) -> bool:
@@ -38,11 +52,13 @@ class AudioStreamer:
             return
 
         if sys.platform == "win32":
+            mic_name = cls.get_webcam_mic_name()
+            audio_source = f"audio={mic_name}" if mic_name else "audio=default"
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
                 "-f", "dshow",
-                "-i", "audio=default",
+                "-i", audio_source,
                 "-f", "s16le",
                 "-ar", str(cls.RATE),
                 "-ac", str(cls.CHANNELS),

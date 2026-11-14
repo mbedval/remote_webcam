@@ -97,7 +97,21 @@ body {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.header-divider {
+  width: 1px;
+  height: 28px;
+  background-color: var(--border-color);
+  margin: 0 4px;
+}
+
+.header-tool-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .metric-pill {
@@ -228,30 +242,63 @@ body {
 }
 
 .control-row {
-  display: grid;
-  grid-template-columns: 1.8fr 1.1fr 1.7fr 1.8fr;
+  display: flex;
+  flex-wrap: wrap;
   gap: 16px;
-  align-items: end;
-}
-
-@media (max-width: 1100px) {
-  .control-row {
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-  }
-}
-
-@media (max-width: 650px) {
-  .control-row {
-    grid-template-columns: 1fr;
-    gap: 14px;
-  }
+  align-items: flex-end;
 }
 
 .control-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* Reduced compact widths for dropboxes */
+.control-group-camera {
+  flex: 0 1 250px;
+  min-width: 180px;
+}
+
+.control-group-res {
+  flex: 0 1 145px;
+  min-width: 130px;
+}
+
+.control-group-fps {
+  flex: 0 1 165px;
+  min-width: 150px;
+}
+
+.control-group-format {
+  flex: 0 1 130px;
+  min-width: 110px;
+}
+
+.control-group-audio {
+  flex: 0 1 195px;
+  min-width: 170px;
+}
+
+@media (max-width: 800px) {
+  .control-row {
+    gap: 12px;
+  }
+}
+
+@media (max-width: 650px) {
+  .control-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .control-group-camera,
+  .control-group-res,
+  .control-group-fps,
+  .control-group-format,
+  .control-group-audio {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 .control-label {
@@ -270,11 +317,14 @@ body {
   background-color: var(--bg-tertiary);
   color: var(--text-main);
   border: 1px solid var(--border-color);
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: var(--radius-sm);
-  font-size: 0.9rem;
+  font-size: 0.88rem;
+  height: 38px;
   outline: none;
   transition: border-color 0.2s ease;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .styled-select:focus, .styled-input:focus {

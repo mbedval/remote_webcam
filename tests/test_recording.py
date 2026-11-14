@@ -148,8 +148,14 @@ class TestWebClientAssets(unittest.TestCase):
         html_content = index_path.read_text(encoding="utf-8")
         self.assertIn('id="recordFormat"', html_content)
         self.assertIn('id="btnRecord"', html_content)
+        self.assertIn('id="btnSnapshot"', html_content)
+        self.assertIn('id="btnFlipH"', html_content)
+        self.assertIn('id="btnFlipV"', html_content)
+        self.assertIn('class="header-right"', html_content)
+        self.assertIn('header-tool-group', html_content)
         self.assertIn('id="hudRec"', html_content)
         self.assertIn('id="fpsSelect"', html_content)
+        self.assertIn('id="audioRecordSelect"', html_content)
         self.assertIn('value="mp4"', html_content)
         self.assertIn('value="webp"', html_content)
 
@@ -157,6 +163,10 @@ class TestWebClientAssets(unittest.TestCase):
         css_content = style_path.read_text(encoding="utf-8")
         self.assertIn(".btn-record", css_content)
         self.assertIn(".badge-rec", css_content)
+        self.assertIn(".header-tool-group", css_content)
+        self.assertIn(".header-divider", css_content)
+        self.assertIn(".control-group-format", css_content)
+        self.assertIn(".control-group-camera", css_content)
 
         app_js_path = Path(__file__).resolve().parent.parent / "server" / "static" / "app.js"
         js_content = app_js_path.read_text(encoding="utf-8")

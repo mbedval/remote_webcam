@@ -22,14 +22,39 @@
         </div>
       </div>
       <div class="header-right">
+        <!-- Viewers Metric -->
         <div class="metric-pill">
           <span class="metric-label">VIEWERS</span>
           <span class="metric-val" id="viewersCount">1</span>
         </div>
+
+        <!-- FPS Metric -->
         <div class="metric-pill">
           <span class="metric-label">FPS</span>
           <span class="metric-val" id="fpsDisplay">--</span>
         </div>
+
+        <div class="header-divider"></div>
+
+        <!-- Action & Recording Tools -->
+        <div class="header-tool-group">
+          <button class="btn btn-record" id="btnRecord" title="Record video stream locally to this device (Shortcut: R)">
+            <span class="rec-icon">🔴</span> <span id="recordBtnText">Record</span>
+          </button>
+          <button class="btn btn-primary" id="btnSnapshot" title="Save snapshot image (Shortcut: S)">
+            📸 Snapshot
+          </button>
+          <button class="btn btn-secondary" id="btnFlipH" title="Flip Horizontal (Mirror)">
+            ↔️ Flip H
+          </button>
+          <button class="btn btn-secondary" id="btnFlipV" title="Flip Vertical">
+            ↕️ Flip V
+          </button>
+        </div>
+
+        <div class="header-divider"></div>
+
+        <!-- Settings / Connect -->
         <button class="btn btn-secondary" id="btnSettings" title="Configure Server IP & Port">
           ⚙️ Connect Server
         </button>
@@ -59,7 +84,7 @@
       <section class="controls-card">
         <div class="control-row">
           <!-- Camera Selector -->
-          <div class="control-group">
+          <div class="control-group control-group-camera">
             <label for="cameraSelect" class="control-label">📷 Camera Device</label>
             <div class="input-with-button">
               <select id="cameraSelect" class="styled-select">
@@ -72,7 +97,7 @@
           </div>
 
           <!-- Resolution Selector -->
-          <div class="control-group">
+          <div class="control-group control-group-res">
             <label for="resSelect" class="control-label">📐 Resolution</label>
             <select id="resSelect" class="styled-select">
               <option value="480p">480p (640x480)</option>
@@ -82,7 +107,7 @@
           </div>
 
           <!-- Frame Rate (FPS) Selector -->
-          <div class="control-group">
+          <div class="control-group control-group-fps">
             <label for="fpsSelect" class="control-label">⚡ Frame Rate</label>
             <select id="fpsSelect" class="styled-select">
               <option value="30" selected>30 FPS (Standard)</option>
@@ -93,35 +118,23 @@
             </select>
           </div>
 
-          <!-- Recording Controls: Format & Record Button -->
-          <div class="control-group">
-            <label for="recordFormat" class="control-label">📼 Record Stream</label>
-            <div class="input-with-button">
-              <select id="recordFormat" class="styled-select">
-                <option value="mp4" selected>MP4 (.mp4)</option>
-                <option value="webp">WebP (.webp)</option>
-                <option value="webm">WebM (.webm)</option>
-              </select>
-              <button class="btn btn-record" id="btnRecord" title="Record video stream locally to this device (Shortcut: R)">
-                <span class="rec-icon">🔴</span> <span id="recordBtnText">Record</span>
-              </button>
-            </div>
+          <!-- File Type / Recording Format Selector -->
+          <div class="control-group control-group-format">
+            <label for="recordFormat" class="control-label">📼 File Type</label>
+            <select id="recordFormat" class="styled-select" title="Recording format">
+              <option value="mp4" selected>MP4 (.mp4)</option>
+              <option value="webp">WebP (.webp)</option>
+              <option value="webm">WebM (.webm)</option>
+            </select>
           </div>
 
-          <!-- Quick Action Buttons -->
-          <div class="control-group actions-group">
-            <label class="control-label">⚡ Actions</label>
-            <div class="action-buttons">
-              <button class="btn btn-primary" id="btnSnapshot" title="Save snapshot image (Shortcut: S)">
-                📸 Snapshot
-              </button>
-              <button class="btn btn-secondary" id="btnFlipH" title="Flip Horizontal (Mirror)">
-                ↔️ Flip H
-              </button>
-              <button class="btn btn-secondary" id="btnFlipV" title="Flip Vertical">
-                ↕️ Flip V
-              </button>
-            </div>
+          <!-- Audio / Microphone Recording -->
+          <div class="control-group control-group-audio">
+            <label for="audioRecordSelect" class="control-label">🎙️ Audio Recording</label>
+            <select id="audioRecordSelect" class="styled-select">
+              <option value="mic" selected>🎙️ USB Mic (Audio+Video)</option>
+              <option value="mute">🔇 Mute (Video Only)</option>
+            </select>
           </div>
         </div>
       </section>

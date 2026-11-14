@@ -151,6 +151,7 @@
   let recordedChunks = [];
   let webpFrames = [];
   let webpCaptureInterval = null;
+  let activeAudioStream = null;
   const recordCanvas = document.createElement("canvas");
   const recordCtx = recordCanvas.getContext("2d");
   let recordAnimFrameId = null;
@@ -296,7 +297,7 @@
     return new Blob([riff, ...parts], { type: "image/webp" });
   }
 
-  function startRecording() {
+  async function startRecording() {
     const format = recordFormat.value; // "mp4", "webp", or "webm"
     const width = videoStream.naturalWidth || 1280;
     const height = videoStream.naturalHeight || 720;
@@ -313,7 +314,7 @@
     if (format === "webp") {
       startWebpRecording(width, height);
     } else {
-      startMediaRecorderRecording(format, width, height);
+      await startMediaRecorderRecording(format, width, height);
     }
   }
 
@@ -353,7 +354,7 @@
     }, frameIntervalMs);
   }
 
-  function startMediaRecorderRecording(format, width, height) {
+  async function startMediaRecorderRecording(format, width, height) {
     recordedChunks = [];
 
     function drawCanvasLoop() {
@@ -373,16 +374,47 @@
     }
     drawCanvasLoop();
 
-    const stream = recordCanvas.captureStream(30);
+    const canvasStream = recordCanvas.captureStream(30);
+    let recordStream = canvasStream;
+
+    // Check if user enabled microphone audio recording
+    const audioSelect = document.getElementById("audioRecordSelect");
+    const includeAudio = !audioSelect || audioSelect.value !== "mute";
+
+    if (includeAudio && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const audioConstraints = {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: true,
+        };
+        if (audioSelect && audioSelect.value && audioSelect.value !== "mic" && audioSelect.value !== "mute") {
+          audioConstraints.deviceId = { exact: audioSelect.value };
+        }
+        activeAudioStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+        const audioTracks = activeAudioStream.getAudioTracks();
+        if (audioTracks.length > 0) {
+          recordStream = new MediaStream([
+            ...canvasStream.getVideoTracks(),
+            audioTracks[0],
+          ]);
+          console.log("Audio track attached to recording from:", audioTracks[0].label || "Microphone");
+        }
+      } catch (err) {
+        console.warn("Could not capture microphone audio (recording video only):", err);
+      }
+    }
 
     let mimeType = "";
     if (format === "mp4") {
       const candidates = [
+        "video/mp4;codecs=avc1,mp4a.40.2",
         "video/mp4;codecs=avc1",
+        "video/mp4;codecs=h264,aac",
         "video/mp4;codecs=h264",
         "video/mp4",
-        "video/webm;codecs=h264",
-        "video/webm;codecs=vp9",
+        "video/webm;codecs=h264,opus",
+        "video/webm;codecs=vp9,opus",
         "video/webm"
       ];
       for (const c of candidates) {
@@ -394,8 +426,9 @@
       if (!mimeType) mimeType = "video/mp4";
     } else {
       const candidates = [
-        "video/webm;codecs=vp9",
-        "video/webm;codecs=vp8",
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm;codecs=h264,opus",
         "video/webm"
       ];
       for (const c of candidates) {
@@ -408,10 +441,10 @@
     }
 
     try {
-      mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      mediaRecorder = new MediaRecorder(recordStream, mimeType ? { mimeType } : undefined);
     } catch (err) {
       console.warn("MediaRecorder init with mimeType", mimeType, "failed, falling back:", err);
-      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder = new MediaRecorder(recordStream);
     }
 
     mediaRecorder.ondataavailable = (e) => {
@@ -422,6 +455,10 @@
 
     mediaRecorder.onstop = () => {
       if (recordAnimFrameId) cancelAnimationFrame(recordAnimFrameId);
+      if (activeAudioStream) {
+        activeAudioStream.getTracks().forEach((track) => track.stop());
+        activeAudioStream = null;
+      }
       if (recordedChunks.length > 0) {
         const actualMime = mediaRecorder.mimeType || mimeType || "video/mp4";
         const isMp4 = actualMime.includes("mp4") || format === "mp4";
@@ -437,6 +474,15 @@
   async function stopRecording() {
     if (!isRecording) return;
     isRecording = false;
+    clearInterval(recordTimerInterval);
+    btnRecord.classList.remove("recording");
+    recordBtnText.textContent = "Processing...";
+    hudRec.style.display = "none";
+
+    if (activeAudioStream) {
+      activeAudioStream.getTracks().forEach((track) => track.stop());
+      activeAudioStream = null;
+    }
     clearInterval(recordTimerInterval);
     btnRecord.classList.remove("recording");
     recordBtnText.textContent = "Processing...";
@@ -483,6 +529,14 @@
       startRecording();
     }
   });
+
+  if (recordFormat) {
+    recordFormat.addEventListener("change", () => {
+      if (btnRecord) {
+        btnRecord.title = `Record video stream locally (${recordFormat.value.toUpperCase()}) (Shortcut: R)`;
+      }
+    });
+  }
 
   btnFlipH.addEventListener("click", async () => {
     await apiFetch("/control?action=flip_h");
@@ -550,9 +604,43 @@
     pollStatus();
   });
 
+  async function loadAudioDevices() {
+    const audioSelect = document.getElementById("audioRecordSelect");
+    if (!audioSelect || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices.filter((d) => d.kind === "audioinput");
+      if (audioInputs.length > 0 && audioInputs.some((d) => Boolean(d.label))) {
+        audioSelect.innerHTML = "";
+        audioInputs.forEach((dev, idx) => {
+          const opt = document.createElement("option");
+          opt.value = dev.deviceId;
+          const label = dev.label || `Microphone ${idx + 1}`;
+          opt.textContent = `🎙️ ${label}`;
+          if (
+            label.toLowerCase().includes("web") ||
+            label.toLowerCase().includes("usb") ||
+            label.toLowerCase().includes("ucamera")
+          ) {
+            opt.selected = true;
+          }
+          audioSelect.appendChild(opt);
+        });
+        const muteOpt = document.createElement("option");
+        muteOpt.value = "mute";
+        muteOpt.textContent = "🔇 Mute (Video Only)";
+        audioSelect.appendChild(muteOpt);
+      }
+    } catch (e) {
+      console.debug("Audio device enumeration:", e);
+    }
+  }
+
   // Init
   updateServerDisplay();
   loadCameras();
+  loadAudioDevices();
   pollStatus();
   statusInterval = setInterval(pollStatus, 1000);
 })();
